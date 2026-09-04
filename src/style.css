@@ -1,0 +1,326 @@
+:root {
+  --felt: #1f3d2b;
+  --felt-light: #2c5540;
+  --tile-face: #f6f0e0;
+  --tile-edge: #d8cba6;
+  --tile-side: #c3b189;
+  --ink: #2b2b2b;
+  --gold: #e7c86a;
+
+  --suit-cloud: #2f7d7a;
+  --suit-star: #c99a1e;
+  --suit-moon: #5a4b9c;
+  --suit-sun: #c0392b;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: radial-gradient(circle at 50% 0%, var(--felt-light), var(--felt) 70%);
+  color: #f2f2f2;
+  user-select: none;
+}
+
+#app {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) 10px calc(env(safe-area-inset-bottom) + 8px);
+}
+
+/* ---------- 상단: 상대(봇) ---------- */
+.opponents {
+  display: flex;
+  justify-content: space-around;
+  gap: 8px;
+  padding: 10px 4px;
+}
+.opp {
+  flex: 1;
+  text-align: center;
+  padding: 8px 4px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  transition: box-shadow 0.2s, background 0.2s;
+}
+.opp.active {
+  background: rgba(231, 200, 106, 0.16);
+  box-shadow: 0 0 0 2px var(--gold) inset;
+}
+.opp .name {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.opp .backs {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  min-height: 26px;
+}
+.tile-back {
+  width: 14px;
+  height: 22px;
+  border-radius: 3px;
+  background: linear-gradient(160deg, #3f6b52, #24402f);
+  border: 1px solid #16281d;
+}
+.opp .status {
+  font-size: 11px;
+  margin-top: 4px;
+  color: var(--gold);
+  min-height: 14px;
+}
+
+/* ---------- 중앙: 테이블 ---------- */
+.table {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px;
+}
+.table-label {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.pile {
+  display: flex;
+  gap: 6px;
+  min-height: 84px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.pile-empty {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 14px;
+}
+.turn-banner {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gold);
+  min-height: 20px;
+}
+
+/* ---------- 타일 ---------- */
+.tile {
+  position: relative;
+  width: 46px;
+  height: 64px;
+  border-radius: 8px 8px 6px 6px;
+  background: linear-gradient(180deg, #fffdf5 0%, var(--tile-face) 55%, var(--tile-edge) 100%);
+  border: 1px solid #b7a678;
+  box-shadow: 0 4px 0 var(--tile-side), 0 6px 8px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+  flex: 0 0 auto;
+}
+.tile .num {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+}
+.tile .suit {
+  font-size: 18px;
+  line-height: 1;
+  margin-top: 2px;
+}
+.tile.small {
+  width: 38px;
+  height: 54px;
+}
+.tile.small .num {
+  font-size: 21px;
+}
+.tile.small .suit {
+  font-size: 15px;
+}
+.tile.s0 {
+  color: var(--suit-cloud);
+}
+.tile.s1 {
+  color: var(--suit-star);
+}
+.tile.s2 {
+  color: var(--suit-moon);
+}
+.tile.s3 {
+  color: var(--suit-sun);
+}
+
+/* ---------- 하단: 내 손패 ---------- */
+.hand-area {
+  padding-top: 8px;
+}
+.me-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 4px 6px;
+  font-size: 13px;
+}
+.hint {
+  color: var(--gold);
+  min-height: 16px;
+  font-size: 12px;
+}
+.hand {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 20px 4px 6px;
+  scrollbar-width: none;
+}
+.hand::-webkit-scrollbar {
+  display: none;
+}
+.hand .tile {
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.hand .tile.selected {
+  transform: translateY(-18px);
+  box-shadow: 0 8px 0 var(--tile-side), 0 12px 14px rgba(0, 0, 0, 0.45),
+    0 0 0 2px var(--gold);
+}
+.hand .tile.disabled {
+  opacity: 0.55;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 4px 0;
+}
+.btn {
+  flex: 1;
+  padding: 14px 0;
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 800;
+  color: #1b1b1b;
+  background: var(--gold);
+  box-shadow: 0 3px 0 #a9873c;
+  cursor: pointer;
+}
+.btn:active {
+  transform: translateY(2px);
+  box-shadow: none;
+}
+.btn.ghost {
+  background: rgba(255, 255, 255, 0.14);
+  color: #f2f2f2;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.3);
+}
+.btn:disabled {
+  opacity: 0.4;
+  box-shadow: none;
+  cursor: default;
+}
+
+/* ---------- 오버레이 ---------- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 10;
+}
+.card {
+  background: #223c2c;
+  border: 1px solid var(--felt-light);
+  border-radius: 18px;
+  padding: 22px;
+  width: 100%;
+  max-width: 360px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+.card h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  text-align: center;
+}
+.card p.sub {
+  margin: 0 0 18px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+}
+.score-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin-bottom: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 15px;
+}
+.score-row.win {
+  background: rgba(231, 200, 106, 0.2);
+  font-weight: 800;
+}
+.score-row .pts.plus {
+  color: #7ee08a;
+}
+.score-row .pts.minus {
+  color: #ef8a7a;
+}
+.field {
+  width: 100%;
+  padding: 12px;
+  margin: 4px 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.25);
+  color: #f2f2f2;
+  font-size: 16px;
+}
+.field:focus {
+  outline: none;
+  border-color: var(--gold);
+}
+
+.seg {
+  display: flex;
+  gap: 8px;
+  margin: 14px 0 18px;
+}
+.seg button {
+  flex: 1;
+  padding: 12px 0;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #f2f2f2;
+  font-weight: 700;
+  cursor: pointer;
+}
+.seg button.on {
+  background: var(--gold);
+  color: #1b1b1b;
+  border-color: var(--gold);
+}

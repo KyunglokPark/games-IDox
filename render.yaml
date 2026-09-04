@@ -1,0 +1,13 @@
+# Render Blueprint — ws 게임 서버 (무료 웹 서비스)
+# 사용: Render 대시보드 → New → Blueprint → 이 저장소 선택
+services:
+  - type: web
+    name: lexio-server
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run server
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
