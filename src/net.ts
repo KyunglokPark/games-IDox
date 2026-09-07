@@ -15,6 +15,7 @@ export interface NetPlayer {
   handCount: number;
   finished: boolean;
   passed: boolean;
+  coins: number;
 }
 export interface StateMsg {
   t: "state";
@@ -28,7 +29,7 @@ export interface StateMsg {
 }
 export interface EndedMsg {
   t: "ended";
-  scores: { playerIndex: number; name: string; tilesLeft: number; score: number }[];
+  scores: { playerIndex: number; name: string; tilesLeft: number; score: number; coins: number }[];
 }
 export interface ErrorMsg {
   t: "error";
@@ -73,8 +74,8 @@ export class Net {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
 
-  join(room: string, name: string) {
-    this.send({ t: "join", room, name });
+  join(room: string, name: string, pin: string) {
+    this.send({ t: "join", room, name, pin });
   }
   addBot() {
     this.send({ t: "addbot" });
@@ -84,6 +85,12 @@ export class Net {
   }
   start() {
     this.send({ t: "start" });
+  }
+  again() {
+    this.send({ t: "again" });
+  }
+  restart() {
+    this.send({ t: "restart" });
   }
   play(tiles: Tile[]) {
     this.send({ t: "play", tiles });

@@ -7,9 +7,9 @@
   --ink: #2b2b2b;
   --gold: #e7c86a;
 
-  --suit-cloud: #2f7d7a;
+  --suit-cloud: #3ba7de;
   --suit-star: #c99a1e;
-  --suit-moon: #5a4b9c;
+  --suit-moon: #2f9e4f;
   --suit-sun: #c0392b;
 }
 
@@ -30,75 +30,145 @@ body {
   background: radial-gradient(circle at 50% 0%, var(--felt-light), var(--felt) 70%);
   color: #f2f2f2;
   user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
 }
 
+/* 고정 설계 캔버스(가로) — JS가 창 크기에 맞춰 scale(), 세로 화면은 rotate(90deg) */
 #app {
-  max-width: 480px;
-  margin: 0 auto;
-  min-height: 100dvh;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  width: 820px;
+  height: 460px;
   display: flex;
   flex-direction: column;
-  padding: env(safe-area-inset-top) 10px calc(env(safe-area-inset-bottom) + 8px);
+  padding: 8px 14px 12px;
+  transform-origin: center center;
 }
 
-/* ---------- 상단: 상대(봇) ---------- */
-.opponents {
-  display: flex;
-  justify-content: space-around;
-  gap: 8px;
-  padding: 10px 4px;
-}
-.opp {
+/* ---------- 플레이 영역: 테이블 중앙 + 상대를 좌·상·우로 분산 ---------- */
+.play {
+  position: relative;
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+/* 상대(좌석) - 테이블 가장자리에 절대배치 */
+.seat {
+  position: absolute;
   text-align: center;
-  padding: 8px 4px;
+  padding: 6px 8px;
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.2);
   transition: box-shadow 0.2s, background 0.2s;
 }
-.opp.active {
+.seat.active {
   background: rgba(231, 200, 106, 0.16);
   box-shadow: 0 0 0 2px var(--gold) inset;
 }
-.opp .name {
+.seat .name {
   font-size: 13px;
   font-weight: 700;
   margin-bottom: 4px;
 }
-.opp .backs {
-  display: flex;
-  justify-content: center;
-  gap: 2px;
-  min-height: 26px;
-}
-.tile-back {
-  width: 14px;
-  height: 22px;
-  border-radius: 3px;
-  background: linear-gradient(160deg, #3f6b52, #24402f);
-  border: 1px solid #16281d;
-}
-.opp .status {
+.seat .status {
   font-size: 11px;
   margin-top: 4px;
   color: var(--gold);
   min-height: 14px;
 }
+.seat .backs {
+  display: flex;
+  justify-content: center;
+  min-height: 40px;
+}
+/* 상대 뒷면 카드: 내 패의 ~60% 크기, 겹쳐서 부채꼴 → 장수 파악 */
+.tile-back {
+  width: 28px;
+  height: 40px;
+  margin-left: -18px;
+  border-radius: 4px;
+  background: linear-gradient(160deg, #3f6b52, #24402f);
+  border: 1px solid #16281d;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.seat .backs .tile-back:first-child {
+  margin-left: 0;
+}
+
+/* 나가기 문 버튼 (좌측 상단) */
+.exit-btn {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  z-index: 3;
+  width: 40px;
+  height: 34px;
+  border: none;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #f2f2f2;
+  font-size: 18px;
+  cursor: pointer;
+}
+.exit-btn:active {
+  transform: translateY(1px);
+}
+
+/* 무늬 순서 범례 (우측 상단) */
+.suit-legend {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 9px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  z-index: 2;
+}
+.suit-legend b {
+  font-size: 16px;
+  line-height: 1;
+}
+.suit-legend .s0 { color: var(--suit-cloud); }
+.suit-legend .s1 { color: var(--suit-star); }
+.suit-legend .s2 { color: var(--suit-moon); }
+.suit-legend .s3 { color: var(--suit-sun); }
+
+/* 좌석 위치 슬롯 - 좌·우 가장자리를 따라 위아래로 분산 (포커 테이블) */
+.seat.pos-top { top: 2%; left: 50%; transform: translateX(-50%); }
+.seat.pos-left { top: 48%; left: 1%; }
+.seat.pos-right { top: 48%; right: 1%; }
+.seat.pos-leftUpper { top: 2%; left: 22%; }
+.seat.pos-rightUpper { top: 2%; right: 22%; }
+.seat.pos-leftLower { top: 48%; left: 1%; }
+.seat.pos-rightLower { top: 48%; right: 1%; }
 
 /* ---------- 중앙: 테이블 ---------- */
 .table {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 10px;
   padding: 12px;
+  margin-top: 130px;
 }
 .table-label {
   font-size: 12px;
   letter-spacing: 2px;
   color: rgba(255, 255, 255, 0.5);
+  transform: translateY(8px);
 }
 .pile {
   display: flex;
@@ -107,6 +177,10 @@ body {
   align-items: center;
   flex-wrap: wrap;
   justify-content: center;
+}
+.pile-sep {
+  width: 18px;
+  flex: 0 0 auto;
 }
 .pile-empty {
   color: rgba(255, 255, 255, 0.4);
@@ -187,6 +261,7 @@ body {
 .hand {
   display: flex;
   gap: 4px;
+  justify-content: center;
   overflow-x: auto;
   padding: 20px 4px 6px;
   scrollbar-width: none;
@@ -209,8 +284,11 @@ body {
 
 .actions {
   display: flex;
+  justify-content: center;
   gap: 8px;
-  padding: 10px 4px 0;
+  padding: 6px 4px 0;
+  transform: scale(0.8);
+  transform-origin: center top;
 }
 .btn {
   display: block;
@@ -226,10 +304,31 @@ body {
   box-shadow: 0 3px 0 #a9873c;
   cursor: pointer;
 }
-/* 게임 화면 하단(패스/내기)에서는 두 버튼이 가로로 반씩 */
-.actions .btn {
+/* 패스/내기: 원래 높이 유지, 폭만 절반(고정), 우측 버튼과 함께 가운데 정렬 */
+.actions > .btn {
+  flex: 0 0 auto;
+  width: 170px;
+}
+/* 우측 세로 버튼(1234 / PAIR) */
+.action-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+  width: 92px;
+}
+.action-side .btn.mini {
   flex: 1;
   width: auto;
+  padding: 8px 4px;
+  font-size: 15px;
+  box-shadow: 0 2px 0 #a9873c;
+}
+.action-side .btn.ghost.mini,
+.action-side .btn.mini {
+  background: rgba(255, 255, 255, 0.16);
+  color: #f2f2f2;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
 }
 .btn:active {
   transform: translateY(2px);
@@ -261,21 +360,31 @@ body {
   background: #223c2c;
   border: 1px solid var(--felt-light);
   border-radius: 18px;
-  padding: 22px;
+  padding: 16px 20px;
   width: 100%;
   max-width: 360px;
+  max-height: 432px;
+  overflow-y: auto;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
 }
 .card h1 {
-  margin: 0 0 6px;
-  font-size: 22px;
+  margin: 2px 0 4px;
+  font-size: 20px;
   text-align: center;
 }
 .card p.sub {
-  margin: 0 0 18px;
+  margin: 0 0 10px;
   text-align: center;
   color: rgba(255, 255, 255, 0.6);
   font-size: 13px;
+}
+.card .btn {
+  padding: 11px 16px;
+  font-size: 16px;
+}
+.card label {
+  display: block;
+  margin-top: 2px;
 }
 .score-row {
   display: flex;
@@ -298,13 +407,13 @@ body {
 }
 .field {
   width: 100%;
-  padding: 12px;
-  margin: 4px 0 12px;
-  border-radius: 10px;
+  padding: 8px 11px;
+  margin: 2px 0 7px;
+  border-radius: 9px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(0, 0, 0, 0.25);
   color: #f2f2f2;
-  font-size: 16px;
+  font-size: 15px;
 }
 .field:focus {
   outline: none;

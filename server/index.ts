@@ -2,23 +2,20 @@
 // 실행: npm run server  (tsx server/index.ts)
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import {
-  GameState,
-  Tile,
-  botMove,
-  computeScores,
-  deal,
-  pass,
-  play,
-} from "../src/engine/index.ts";
+import { GameState, Tile, botMove, deal, pass, play } from "../src/engine/index.ts";
+import { getProfile, saveProfile, storageMode } from "./store.ts";
 
 const PORT = Number(process.env.PORT ?? 3001);
+const NEW_USER_COINS = 1000; // 신규 유저 지급 코인
 
 interface Seat {
   id: string;
   name: string;
   isBot: boolean;
   ws: WebSocket | null; // null = 봇이거나 접속 끊김
+  coins: number;
+  pin: string; // 봇은 ""
+  authName: string; // 프로필 저장 키 (봇은 "")
 }
 interface Room {
   code: string;
@@ -30,6 +27,18 @@ interface Room {
 
 const rooms = new Map<string, Room>();
 let seatCounter = 0;
+
+const BOT_NAMES = [
+  "초코곰", "왕감자", "라면요정", "구름토끼", "번개손", "달빛여우",
+  "코인부자", "졸린판다", "행운의별", "노랑나비", "빨강망토", "치즈냥",
+  "밤톨이", "럭키세븐", "무적타일", "핑크솜사탕", "은하수", "포카드킹",
+];
+function pickBotName(room: Room): string {
+  const used = new Set(room.seats.map((s) => s.name));
+  const avail = BOT_NAMES.filter((n) => !used.has(n));
+  const pool = avail.length ? avail : BOT_NAMES;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 
 function getRoom(code: string): Room {
   let r = rooms.get(code);
@@ -72,6 +81,7 @@ function viewFor(room: Room, seatIndex: number) {
       handCount: p.hand.length,
       finished: st.finishedOrder.includes(i),
       passed: st.passed[i],
+      coins: room.seats[i].coins,
     })),
     hand: st.players[seatIndex].hand, // 본인 손패만
     lastPlay: st.lastPlay
@@ -84,10 +94,36 @@ function viewFor(room: Room, seatIndex: number) {
 function broadcastState(room: Room) {
   if (!room.state) return;
   room.seats.forEach((s, i) => send(s.ws, viewFor(room, i)));
-  if (room.state.phase === "ended") {
-    const scores = computeScores(room.state).sort((a, b) => b.score - a.score);
-    for (const s of room.seats) send(s.ws, { t: "ended", scores });
+}
+
+// 게임 종료: 승자 독식 정산 → 코인 갱신(0 하한) → 유저 프로필 저장 → 최종 상태+결과 전송
+async function finishGame(room: Room) {
+  const st = room.state;
+  if (!st) return;
+  const eff = st.players.map((p) => {
+    const left = p.hand.length;
+    return p.hand.some((t) => t.num === 2) ? left * 2 : left;
+  });
+  const pot = eff.reduce((a, b) => a + b, 0);
+  const deltas = eff.map((e) => (e === 0 ? pot : -e));
+
+  for (let i = 0; i < room.seats.length; i++) {
+    const s = room.seats[i];
+    s.coins = Math.max(0, s.coins + deltas[i]);
+    if (!s.isBot && s.authName) await saveProfile(s.authName, { pin: s.pin, coins: s.coins });
   }
+
+  room.seats.forEach((s, i) => send(s.ws, viewFor(room, i))); // 갱신된 코인 반영된 최종 상태
+  const scores = st.players
+    .map((p, i) => ({
+      playerIndex: i,
+      name: room.seats[i].name,
+      tilesLeft: p.hand.length,
+      score: deltas[i],
+      coins: room.seats[i].coins,
+    }))
+    .sort((a, b) => b.score - a.score);
+  for (const s of room.seats) send(s.ws, { t: "ended", scores });
 }
 
 // ---------- 자동 진행 (봇/접속끊김 좌석) ----------
@@ -111,6 +147,10 @@ function scheduleAuto(room: Room) {
     const mv = botMove(s, idx);
     const r = mv ? play(s, idx, mv.tiles) : pass(s, idx);
     room.state = r.state;
+    if (room.state.phase === "ended") {
+      void finishGame(room);
+      return;
+    }
     broadcastState(room);
     scheduleAuto(room);
   }, BOT_MS);
@@ -143,8 +183,51 @@ function handleMove(room: Room, seatIndex: number, action: () => ReturnType<type
     return;
   }
   room.state = r.state;
+  if (room.state.phase === "ended") {
+    void finishGame(room);
+    return;
+  }
   broadcastState(room);
   scheduleAuto(room);
+}
+
+// ---------- 로그인/입장 (닉네임 + PIN 인증) ----------
+async function handleJoin(
+  ws: WebSocket,
+  msg: any,
+  setCtx: (c: { room: Room; seatId: string }) => void,
+) {
+  const room = getRoom(String(msg.room || "LOBBY").toUpperCase().slice(0, 8));
+  if (room.state) return send(ws, { t: "error", msg: "이미 시작된 방입니다" });
+  if (room.seats.filter((s) => !s.isBot).length >= 5)
+    return send(ws, { t: "error", msg: "방이 가득 찼습니다 (최대 5명)" });
+
+  const name = String(msg.name || "").slice(0, 10).trim();
+  const pin = String(msg.pin || "");
+  if (!name) return send(ws, { t: "error", msg: "닉네임을 입력하세요" });
+  if (!/^\d{4}$/.test(pin)) return send(ws, { t: "error", msg: "PIN 4자리 숫자를 입력하세요" });
+
+  const prof = await getProfile(name);
+  if (prof) {
+    if (prof.pin !== pin) return send(ws, { t: "error", msg: "PIN이 일치하지 않습니다" });
+  } else {
+    await saveProfile(name, { pin, coins: NEW_USER_COINS });
+  }
+  const coins = prof ? prof.coins : NEW_USER_COINS;
+
+  const seat: Seat = {
+    id: `s${++seatCounter}`,
+    name,
+    isBot: false,
+    ws,
+    coins,
+    pin,
+    authName: name,
+  };
+  room.seats.push(seat);
+  if (!room.hostId) room.hostId = seat.id;
+  setCtx({ room, seatId: seat.id });
+  broadcastLobby(room);
 }
 
 // ---------- 연결 ----------
@@ -161,7 +244,9 @@ const httpServer = createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ server: httpServer });
-httpServer.listen(PORT, () => console.log(`[렉시오 서버] :${PORT} 대기 중 (http+ws)`));
+httpServer.listen(PORT, () =>
+  console.log(`[렉시오 서버] :${PORT} 대기 중 (http+ws) · 저장소: ${storageMode()}`),
+);
 
 wss.on("connection", (ws) => {
   let ctx: { room: Room; seatId: string } | null = null;
@@ -175,25 +260,7 @@ wss.on("connection", (ws) => {
     }
 
     if (msg.t === "join") {
-      const room = getRoom(String(msg.room || "LOBBY").toUpperCase().slice(0, 8));
-      if (room.state) {
-        send(ws, { t: "error", msg: "이미 시작된 방입니다" });
-        return;
-      }
-      if (room.seats.filter((s) => !s.isBot).length >= 5) {
-        send(ws, { t: "error", msg: "방이 가득 찼습니다 (최대 5명)" });
-        return;
-      }
-      const seat: Seat = {
-        id: `s${++seatCounter}`,
-        name: String(msg.name || "익명").slice(0, 10),
-        isBot: false,
-        ws,
-      };
-      room.seats.push(seat);
-      if (!room.hostId) room.hostId = seat.id;
-      ctx = { room, seatId: seat.id };
-      broadcastLobby(room);
+      void handleJoin(ws, msg, (c) => (ctx = c));
       return;
     }
 
@@ -207,7 +274,7 @@ wss.on("connection", (ws) => {
       case "addbot":
         if (!isHost || room.state) break;
         if (room.seats.length >= 5) break;
-        room.seats.push({ id: `b${++seatCounter}`, name: `봇${room.seats.length}`, isBot: true, ws: null });
+        room.seats.push({ id: `b${++seatCounter}`, name: pickBotName(room), isBot: true, ws: null, coins: NEW_USER_COINS, pin: "", authName: "" });
         broadcastLobby(room);
         break;
       case "removebot":
@@ -223,6 +290,33 @@ wss.on("connection", (ws) => {
       case "start":
         if (!isHost) break;
         startGame(room);
+        break;
+      case "again": // 종료 후 대기실로 리셋 (코인·좌석 유지)
+        if (!room.state || room.state.phase !== "ended") break;
+        room.state = null;
+        if (room.timer) {
+          clearTimeout(room.timer);
+          room.timer = null;
+        }
+        room.seats = room.seats.filter((s) => s.isBot || (s.ws && s.ws.readyState === WebSocket.OPEN));
+        if (!room.seats.some((s) => s.id === room.hostId)) {
+          room.hostId = room.seats.find((s) => !s.isBot)?.id ?? null;
+        }
+        broadcastLobby(room);
+        break;
+      case "restart": // 방장: 끝난 게임 리셋 후 같은 인원·코인으로 새 판 바로 시작
+        if (!isHost || !room.state || room.state.phase !== "ended") break;
+        room.state = null;
+        if (room.timer) {
+          clearTimeout(room.timer);
+          room.timer = null;
+        }
+        room.seats = room.seats.filter((s) => s.isBot || (s.ws && s.ws.readyState === WebSocket.OPEN));
+        if (!room.seats.some((s) => s.id === room.hostId)) {
+          room.hostId = room.seats.find((s) => !s.isBot)?.id ?? null;
+        }
+        if (room.seats.length >= 3) startGame(room);
+        else broadcastLobby(room); // 3명 미만이면 대기실로(봇 추가 가능)
         break;
       case "play":
         handleMove(room, seatIndex, () => play(room.state!, seatIndex, msg.tiles as Tile[]), ws);
