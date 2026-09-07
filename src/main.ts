@@ -46,6 +46,7 @@ interface Board {
   lastPlayCombo: Combo | null;
   lastPlayName: string | null;
   myTurn: boolean;
+  turnDeadline: number; // 현재 턴 마감 epoch ms (0 = 없음)
 }
 interface ScoreRowLite {
   playerIndex: number;
@@ -68,6 +69,13 @@ const HUMAN = 0;
 const START_COIN = 100;
 let coins: number[] = []; // 좌석별 코인 (로컬 전용)
 let localPlayers: { id: string; name: string; isBot: boolean }[] = [];
+
+// 턴 타이머
+const TURN_MS = 30000;
+let localDeadline = 0; // 로컬 내 턴 마감
+let localTurnTimer: number | null = null;
+let turnDeadlineMs = 0; // 표시용(현재 턴 마감)
+let activeIsMe = false;
 
 // online
 const net = new Net();
@@ -169,6 +177,7 @@ function localBoard(): Board {
     lastPlayCombo: s.lastPlay?.combo ?? null,
     lastPlayName: s.lastPlay ? s.players[s.lastPlay.playerIndex].name : null,
     myTurn: s.turn === HUMAN && s.phase === "playing",
+    turnDeadline: s.turn === HUMAN && s.phase === "playing" ? localDeadline : 0,
   };
 }
 function onlineBoard(): Board {
@@ -190,11 +199,13 @@ function onlineBoard(): Board {
     lastPlayCombo: v.lastPlay ? evaluate(v.lastPlay.tiles) : null,
     lastPlayName: v.lastPlay ? v.players[v.lastPlay.seat]?.name ?? null : null,
     myTurn: v.turn === v.seat && v.phase === "playing",
+    turnDeadline: v.turnDeadline ?? 0,
   };
 }
 
 // ---------- 액션 디스패치 ----------
 function doPlay(tiles: Tile[]) {
+  clearLocalTimer();
   if (mode === "local") {
     const r = play(local!, HUMAN, tiles);
     if (!r.ok) return void ((message = r.error ?? ""), renderGame());
@@ -207,6 +218,7 @@ function doPlay(tiles: Tile[]) {
   }
 }
 function doPass() {
+  clearLocalTimer();
   if (mode === "local") {
     const r = pass(local!, HUMAN);
     if (!r.ok) return void ((message = r.error ?? ""), renderGame());
@@ -227,6 +239,42 @@ function settle(s: GameState): number[] {
   });
   const pot = eff.reduce((a, b) => a + b, 0);
   return eff.map((e) => (e === 0 ? pot : -e));
+}
+
+function clearLocalTimer() {
+  if (localTurnTimer !== null) {
+    clearTimeout(localTurnTimer);
+    localTurnTimer = null;
+  }
+}
+function onLocalTimeout() {
+  localTurnTimer = null;
+  if (mode !== "local" || !local || local.phase !== "playing" || local.turn !== HUMAN) return;
+  if (local.lastPlay) doPass();
+  else doPlay([local.players[HUMAN].hand[0]]); // 선이면 최저 싱글 자동
+}
+
+// 타이머 표시 갱신 (별도 인터벌에서 호출)
+function updateTimers() {
+  if (!document.getElementById("hand")) return; // 게임 화면 아닐 때 무시
+  const myT = document.getElementById("my-timer");
+  const seatT = app.querySelector(".seat.active .seat-timer") as HTMLElement | null;
+  if (!turnDeadlineMs) {
+    if (myT) myT.textContent = "";
+    if (seatT) seatT.textContent = "";
+    return;
+  }
+  const rem = Math.max(0, Math.ceil((turnDeadlineMs - Date.now()) / 1000));
+  if (activeIsMe) {
+    if (myT) {
+      myT.textContent = `⏱ ${rem}`;
+      myT.classList.toggle("urgent", rem <= 5);
+    }
+    if (seatT) seatT.textContent = "";
+  } else {
+    if (seatT) seatT.textContent = String(rem);
+    if (myT) myT.textContent = "";
+  }
 }
 
 function afterLocalMove() {
@@ -263,11 +311,45 @@ function renderMenu() {
       <h1>렉시오 <span style="color:var(--gold)">LEXIO</span></h1>
       <p class="sub">마작패로 즐기는 클라이밍 카드게임</p>
       <button class="btn" id="local" style="margin-bottom:10px">봇과 연습 (로컬)</button>
-      <button class="btn ghost" id="online">친구와 온라인 대전</button>
-      <p class="sub" style="margin-top:16px">숫자 3&lt;4&lt;…&lt;15&lt;1&lt;2 · 무늬 ☁&lt;★&lt;☾&lt;☀</p>
+      <button class="btn ghost" id="online" style="margin-bottom:10px">친구와 온라인 대전</button>
+      <button class="btn ghost" id="tutorial">게임 방법</button>
     </div></div>`;
   app.querySelector("#local")!.addEventListener("click", renderLocalSetup);
   app.querySelector("#online")!.addEventListener("click", renderOnlineSetup);
+  app.querySelector("#tutorial")!.addEventListener("click", renderTutorial);
+}
+
+// ---------- 튜토리얼 ----------
+function renderTutorial() {
+  app.innerHTML = `
+    <div class="overlay"><div class="card">
+      <h1>게임 방법</h1>
+      <div class="tut">
+        <h3>🎯 목표</h3>
+        <p>손패를 가장 먼저 다 내려놓으면 승리! 남은 타일은 벌점(코인 차감)입니다.</p>
+
+        <h3>🔢 숫자 세기</h3>
+        <p>약함 &nbsp;<b>3 &lt; 4 &lt; … &lt; 15 &lt; 1 &lt; 2</b>&nbsp; 강함 &nbsp;(2가 최강)</p>
+
+        <h3>🎨 무늬 세기</h3>
+        <p>약함 &nbsp;<b class="s0">☁구름</b> &lt; <b class="s1">★별</b> &lt; <b class="s2">☾달</b> &lt; <b class="s3">☀해</b>&nbsp; 강함<br>숫자가 같으면 무늬로 우열을 가림</p>
+
+        <h3>🀄 낼 수 있는 조합</h3>
+        <p>싱글(1장) · 페어(2장) · 트리플(3장) · 5장 조합</p>
+        <p>5장 족보(약→강): 스트레이트 &lt; 플러시 &lt; 풀하우스 &lt; 포카드 &lt; 스트레이트플러시</p>
+
+        <h3>🔄 진행</h3>
+        <p>앞 사람과 <b>같은 장수</b>로 <b>더 높은</b> 조합을 내거나 <b>패스</b>. 모두 패스하면 마지막에 낸 사람이 새로 시작(선)합니다.</p>
+
+        <h3>🪙 정산 (승자 독식)</h3>
+        <p>승자가 판돈을 모두 가져가고, 나머지는 <b>남은 타일 수</b>만큼 잃습니다. 손패에 <b>2</b>가 있으면 <b>2배</b>로 잃어요!</p>
+
+        <h3>⏱ 시간 · 도우미</h3>
+        <p>턴당 <b>30초</b>, 넘기면 자동 패스. <b>PAIR</b> 버튼은 낼 수 있는 조합을 강한 순으로 자동 선택(다시 누르면 다음 조합), <b>1234</b>는 선택 해제입니다.</p>
+      </div>
+      <button class="btn" id="back" style="margin-top:12px">닫기</button>
+    </div></div>`;
+  app.querySelector("#back")!.addEventListener("click", renderMenu);
 }
 
 function renderLocalSetup() {
@@ -378,9 +460,29 @@ function renderOnlineSetup() {
     net.close();
     renderMenu();
   });
+
+  // PIN 마스킹: 방금 입력한 글자만 보이고 다음 글자로 넘어가면 ●로 (실제값은 dataset.real)
+  const pinInput = app.querySelector("#pin") as HTMLInputElement;
+  let realPin = netPin;
+  const maskPin = () => {
+    const n = realPin.length;
+    pinInput.value = n === 0 ? "" : "●".repeat(n - 1) + realPin[n - 1];
+    pinInput.dataset.real = realPin;
+  };
+  pinInput.addEventListener("input", () => {
+    const v = pinInput.value;
+    if (v.length > realPin.length) {
+      realPin = (realPin + v.slice(realPin.length).replace(/\D/g, "")).slice(0, 4);
+    } else {
+      realPin = realPin.slice(0, v.length);
+    }
+    maskPin();
+  });
+  maskPin();
+
   app.querySelector("#join")!.addEventListener("click", () => {
     netName = (app.querySelector("#name") as HTMLInputElement).value.trim() || "익명";
-    netPin = (app.querySelector("#pin") as HTMLInputElement).value.trim();
+    netPin = (app.querySelector("#pin") as HTMLInputElement).dataset.real || "";
     netRoom = ((app.querySelector("#room") as HTMLInputElement).value || "ROOM1").toUpperCase();
     if (!/^\d{4}$/.test(netPin)) {
       const err = app.querySelector("#neterr");
@@ -486,19 +588,6 @@ function seatSlots(n: number): string[] {
 function renderPile(board: Board): string {
   const tiles = board.lastPlayTiles;
   if (!tiles) return `<span class="pile-empty">— 선이 자유롭게 냅니다 —</span>`;
-  if (board.lastPlayCombo?.type === ComboType.FullHouse) {
-    const groups = new Map<number, Tile[]>();
-    for (const t of tiles) {
-      const arr = groups.get(t.num) ?? [];
-      arr.push(t);
-      groups.set(t.num, arr);
-    }
-    const g = [...groups.values()];
-    const triple = g.find((x) => x.length === 3) ?? [];
-    const pair = g.find((x) => x.length === 2) ?? [];
-    const draw = (arr: Tile[]) => arr.map((t) => tileHTML(t, { small: true })).join("");
-    return `${draw(triple)}<span class="pile-sep"></span>${draw(pair)}`;
-  }
   return tiles.map((t) => tileHTML(t, { small: true })).join("");
 }
 
@@ -506,6 +595,21 @@ function renderPile(board: Board): string {
 function renderGame() {
   const board = mode === "local" ? (local ? localBoard() : null) : view ? onlineBoard() : null;
   if (!board) return;
+
+  // 로컬 내 턴 15초 타이머 arm/clear
+  if (mode === "local") {
+    if (board.myTurn && localTurnTimer === null) {
+      localDeadline = Date.now() + TURN_MS;
+      localTurnTimer = window.setTimeout(onLocalTimeout, TURN_MS);
+      board.turnDeadline = localDeadline;
+    } else if (!board.myTurn && localTurnTimer !== null) {
+      clearLocalTimer();
+      localDeadline = 0;
+    }
+  }
+  turnDeadlineMs = board.turnDeadline;
+  activeIsMe = board.myTurn;
+
   const { canPlay, hint } = evalSelection(board);
 
   // 상대를 내 다음 좌석부터 시계방향으로 나열 후, 좌·상·우 슬롯에 분산 배치
@@ -523,6 +627,7 @@ function renderGame() {
         <div class="name">${p.name}${coin}</div>
         <div class="backs">${backs}</div>
         <div class="status">${st} ${p.handCount}장</div>
+        <div class="seat-timer"></div>
       </div>`;
     })
     .join("");
@@ -555,7 +660,10 @@ function renderGame() {
         })()}</span>
         <span class="hint">${message || hint}</span>
       </div>
-      <div class="hand" id="hand">${hand}</div>
+      <div class="hand-row">
+        <div class="hand" id="hand">${hand}</div>
+        <span class="my-timer" id="my-timer"></span>
+      </div>
       <div class="actions">
         <button class="btn ghost" id="pass" ${board.myTurn && board.lastPlayCombo ? "" : "disabled"}>패스</button>
         <button class="btn" id="play" ${board.myTurn && canPlay ? "" : "disabled"}>내기</button>
@@ -700,5 +808,7 @@ function fitScale() {
 window.addEventListener("resize", fitScale);
 window.addEventListener("orientationchange", fitScale);
 fitScale();
+
+setInterval(updateTimers, 250); // 턴 카운트다운 갱신
 
 renderMenu();

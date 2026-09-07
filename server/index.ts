@@ -22,7 +22,9 @@ interface Room {
   seats: Seat[];
   hostId: string | null;
   state: GameState | null;
-  timer: ReturnType<typeof setTimeout> | null;
+  timer: ReturnType<typeof setTimeout> | null; // 봇 자동 진행
+  turnTimer: ReturnType<typeof setTimeout> | null; // 사람 15초 타임아웃
+  turnDeadline: number; // 현재 턴 마감 시각(epoch ms), 0 = 없음
 }
 
 const rooms = new Map<string, Room>();
@@ -43,7 +45,7 @@ function pickBotName(room: Room): string {
 function getRoom(code: string): Room {
   let r = rooms.get(code);
   if (!r) {
-    r = { code, seats: [], hostId: null, state: null, timer: null };
+    r = { code, seats: [], hostId: null, state: null, timer: null, turnTimer: null, turnDeadline: 0 };
     rooms.set(code, r);
   }
   return r;
@@ -87,6 +89,7 @@ function viewFor(room: Room, seatIndex: number) {
     lastPlay: st.lastPlay
       ? { seat: st.lastPlay.playerIndex, tiles: st.lastPlay.combo.tiles, count: st.lastPlay.combo.count }
       : null,
+    turnDeadline: room.turnDeadline,
     log: st.log.slice(-6),
   };
 }
@@ -100,6 +103,8 @@ function broadcastState(room: Room) {
 async function finishGame(room: Room) {
   const st = room.state;
   if (!st) return;
+  clearTurnTimer(room);
+  room.turnDeadline = 0;
   const eff = st.players.map((p) => {
     const left = p.hand.length;
     return p.hand.some((t) => t.num === 2) ? left * 2 : left;
@@ -132,6 +137,7 @@ function isAuto(seat: Seat): boolean {
 }
 
 const BOT_MS = Number(process.env.BOT_MS ?? 800);
+const TURN_MS = Number(process.env.TURN_MS ?? 30000); // 사람 턴 제한시간
 
 function scheduleAuto(room: Room) {
   if (room.timer) return;
@@ -151,9 +157,45 @@ function scheduleAuto(room: Room) {
       void finishGame(room);
       return;
     }
-    broadcastState(room);
-    scheduleAuto(room);
+    progressTurn(room);
   }, BOT_MS);
+}
+
+function clearTurnTimer(room: Room) {
+  if (room.turnTimer) {
+    clearTimeout(room.turnTimer);
+    room.turnTimer = null;
+  }
+}
+
+// 턴 진행: 마감시각 계산 → 상태 브로드캐스트 → 봇 자동(빠름) + 사람 15초 타임아웃
+function progressTurn(room: Room) {
+  clearTurnTimer(room);
+  const st = room.state;
+  if (st && st.phase === "playing" && !isAuto(room.seats[st.turn])) {
+    room.turnDeadline = Date.now() + TURN_MS;
+  } else {
+    room.turnDeadline = 0;
+  }
+  broadcastState(room);
+  scheduleAuto(room);
+  if (room.turnDeadline) {
+    room.turnTimer = setTimeout(() => {
+      room.turnTimer = null;
+      const s = room.state;
+      if (!s || s.phase !== "playing") return;
+      const idx = s.turn;
+      if (isAuto(room.seats[idx])) return;
+      // 시간 초과: 선이면 최저 싱글 자동, 아니면 패스
+      const r = s.lastPlay ? pass(s, idx) : play(s, idx, [s.players[idx].hand[0]]);
+      room.state = r.state;
+      if (room.state.phase === "ended") {
+        void finishGame(room);
+        return;
+      }
+      progressTurn(room);
+    }, TURN_MS);
+  }
 }
 
 // ---------- 액션 처리 ----------
@@ -166,8 +208,7 @@ function startGame(room: Room) {
   room.state = deal({
     players: room.seats.map((s) => ({ id: s.id, name: s.name, isBot: s.isBot })),
   });
-  broadcastState(room);
-  scheduleAuto(room);
+  progressTurn(room);
 }
 
 function handleMove(room: Room, seatIndex: number, action: () => ReturnType<typeof play>, ws: WebSocket) {
@@ -187,8 +228,7 @@ function handleMove(room: Room, seatIndex: number, action: () => ReturnType<type
     void finishGame(room);
     return;
   }
-  broadcastState(room);
-  scheduleAuto(room);
+  progressTurn(room);
 }
 
 // ---------- 로그인/입장 (닉네임 + PIN 인증) ----------
@@ -294,6 +334,8 @@ wss.on("connection", (ws) => {
       case "again": // 종료 후 대기실로 리셋 (코인·좌석 유지)
         if (!room.state || room.state.phase !== "ended") break;
         room.state = null;
+        clearTurnTimer(room);
+        room.turnDeadline = 0;
         if (room.timer) {
           clearTimeout(room.timer);
           room.timer = null;
@@ -307,6 +349,8 @@ wss.on("connection", (ws) => {
       case "restart": // 방장: 끝난 게임 리셋 후 같은 인원·코인으로 새 판 바로 시작
         if (!isHost || !room.state || room.state.phase !== "ended") break;
         room.state = null;
+        clearTurnTimer(room);
+        room.turnDeadline = 0;
         if (room.timer) {
           clearTimeout(room.timer);
           room.timer = null;
@@ -335,17 +379,20 @@ wss.on("connection", (ws) => {
     if (room.state) {
       // 게임 중 이탈: 좌석 유지하되 자동 진행으로 대체
       seat.ws = null;
-      scheduleAuto(room);
+      progressTurn(room);
     } else {
       // 로비 중 이탈: 좌석 제거
       const idx = room.seats.indexOf(seat);
       room.seats.splice(idx, 1);
       if (room.hostId === seat.id) room.hostId = room.seats.find((s) => !s.isBot)?.id ?? null;
-      if (room.seats.every((s) => s.isBot) || room.seats.length === 0) {
-        rooms.delete(room.code);
-      } else {
-        broadcastLobby(room);
-      }
+      broadcastLobby(room);
+    }
+    // 접속된 사람이 아무도 없으면 방 삭제 (봇만 남거나 전원 이탈)
+    const humanOnline = room.seats.some((s) => !s.isBot && s.ws && s.ws.readyState === WebSocket.OPEN);
+    if (!humanOnline) {
+      clearTurnTimer(room);
+      if (room.timer) clearTimeout(room.timer);
+      rooms.delete(room.code);
     }
   });
 });

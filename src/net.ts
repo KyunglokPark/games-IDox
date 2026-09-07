@@ -25,6 +25,7 @@ export interface StateMsg {
   players: NetPlayer[];
   hand: Tile[];
   lastPlay: { seat: number; tiles: Tile[]; count: number } | null;
+  turnDeadline: number;
   log: string[];
 }
 export interface EndedMsg {
