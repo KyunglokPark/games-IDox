@@ -52,64 +52,55 @@ function keyAsc(a: Combo, b: Combo): number {
   return 0;
 }
 
-/**
- * 간단한 봇: 반환 null = 패스.
- * - 선일 때: 가장 약한 싱글부터 흘려보낸다.
- * - 받아칠 때: 오버킬 최소화(가장 약하게 이기는 수), 없으면 패스.
- */
-const isRed2 = (t: Tile) => t.num === 2 && t.suit === 3; // 해2 = 최강 싱글
-const usesRed2 = (c: Combo) => c.tiles.some(isRed2);
-const inPair = (hand: Tile[], t: Tile) => hand.filter((x) => x.num === t.num).length >= 2;
+/** 봇 전략 파라미터 (시뮬레이션으로 튜닝) */
+export interface BotParams {
+  leadOrder: number[]; // 선일 때 시도할 조합 장수 우선순위 (같은 장수 내 최저부터)
+  blockEndgame: boolean; // 막판(상대 소수) 방어: 높게 받아쳐 상대가 못 나가게
+  endgameTiles: number; // 상대가 이 장수 이하면 막판
+}
+// 시뮬 검증(수만 판): 리드 5→3→2→1, 응수 최소 오버킬(강한 패 자연 보존). 막판 방어는 오히려 손해라 끔.
+export const SMART: BotParams = { leadOrder: [5, 3, 2, 1], blockEndgame: false, endgameTiles: 2 };
 
 /**
  * 전략형 봇.
- * - 막판(상대 1~2장): 상대가 못 받는 조합(5장/트리플) 또는 높은 싱글로 선을 지켜 막음.
- * - 붉은2는 선 되찾기용으로 아껴 페어/플러시/조합에 쓰지 않음.
- * - 잡패 싱글부터 버리고 페어는 최대한 보류.
- * - 이번 턴에 다 털 수 있으면 승리 우선.
+ * - 리드: leadOrder대로 낮은 조합부터 흘려 손패를 빨리 줄임(다장수 우선).
+ * - 응수: 최소 오버킬(가장 낮게 이김) → 2 등 강한 패는 자연히 보존, 필요할 때만 나감.
+ * - 막판(상대 소수): 최대한 높게 받아쳐 상대가 못 나가게 방어.
+ * - 이번에 다 털 수 있으면 무조건 승리.
  */
-export function botMove(state: GameState, playerIndex: number): Combo | null {
-  const hand = state.players[playerIndex].hand;
-  const others = state.players.filter((p, i) => i !== playerIndex && p.hand.length > 0);
-  const danger = others.length > 0 && Math.min(...others.map((p) => p.hand.length)) <= 2;
+export function botMove(state: GameState, idx: number, P: BotParams = SMART): Combo | null {
+  const hand = state.players[idx].hand;
+  const others = state.players.filter((p, i) => i !== idx && p.hand.length > 0);
+  const minOpp = others.length ? Math.min(...others.map((p) => p.hand.length)) : 99;
 
-  if (!state.lastPlay) return chooseLead(hand, danger);
+  if (!state.lastPlay) return chooseLead(hand, P);
 
   const need = state.lastPlay.combo;
-  const options = legalMoves(state, playerIndex).sort(keyAsc);
-  if (!options.length) return null; // 패스
+  const opts = legalMoves(state, idx).sort(keyAsc);
+  if (!opts.length) return null; // 패스
 
-  if (need.count === 1) {
-    if (danger) return options[options.length - 1]; // 막판: 최고 싱글로 선 뺏어 막기
-    // 평상시: 붉은2 아끼고, 페어 깨지 않는 싱글, 최소 오버킬
-    const notRed2 = options.filter((c) => !usesRed2(c));
-    const notPair = notRed2.filter((c) => !inPair(hand, c.tiles[0]));
-    return notPair[0] ?? notRed2[0] ?? options[0];
-  }
-  return options[0]; // 페어/트리플/5장: 최소로 이기기
+  if (need.count === hand.length) return opts[0]; // 내면 승리
+  if (P.blockEndgame && minOpp <= P.endgameTiles) return opts[opts.length - 1]; // 막판: 높게 막기
+  return opts[0]; // 최소 오버킬
 }
 
-function chooseLead(hand: Tile[], danger: boolean): Combo | null {
+function chooseLead(hand: Tile[], P: BotParams): Combo | null {
   const all = allCombos(hand);
   if (!all.length) return null;
-
-  // 이번에 손패를 다 털 수 있으면 승리
   const win = all.filter((c) => c.count === hand.length).sort(keyAsc)[0];
-  if (win) return win;
-
-  const byCount = (n: number) => all.filter((c) => c.count === n).sort(keyAsc);
-  const fives = byCount(5), triples = byCount(3), pairs = byCount(2), singles = byCount(1);
-
-  if (danger) {
-    // 상대 1~2장: 상대가 못 받는 조합으로 선 유지
-    if (fives.length) return fives[0];
-    if (triples.length) return triples[0];
-    return singles[singles.length - 1]; // 최고 싱글로 막기 (해2면 무적)
+  if (win) return win; // 다 털어서 승리
+  for (const cnt of P.leadOrder) {
+    const c = all.filter((x) => x.count === cnt).sort(keyAsc)[0];
+    if (c) return c;
   }
+  return all.sort(keyAsc)[0];
+}
 
-  // 평상시: 붉은2 보존, 페어 보류. 5장 → 트리플 → 낮은 잡패 싱글 → 페어 → 최후
-  const fivesNoRed2 = fives.filter((c) => !usesRed2(c));
-  const singlesNoRed2 = singles.filter((c) => !usesRed2(c));
-  const pairsNoRed2 = pairs.filter((c) => !usesRed2(c));
-  return fivesNoRed2[0] ?? triples[0] ?? singlesNoRed2[0] ?? pairsNoRed2[0] ?? all.sort(keyAsc)[0];
+/** 비교용 단순 봇: 리드=최저 싱글, 응수=최소 오버킬 */
+export function botMoveBaseline(state: GameState, idx: number): Combo | null {
+  const hand = state.players[idx].hand;
+  if (!state.lastPlay) {
+    return allCombos(hand, 1).sort(keyAsc)[0] ?? allCombos(hand).sort(keyAsc)[0] ?? null;
+  }
+  return legalMoves(state, idx).sort(keyAsc)[0] ?? null;
 }
