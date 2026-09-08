@@ -47,3 +47,37 @@ export async function saveProfile(name: string, p: Profile): Promise<void> {
     console.error("[store] saveProfile 실패:", (e as Error).message);
   }
 }
+
+// 특정 유저 프로필 삭제 (다음 로그인 시 신규로 재생성 → 코인 초기화)
+export async function deleteProfile(name: string): Promise<void> {
+  mem.delete(key(name));
+  if (!useRedis) return;
+  try {
+    await redis(["DEL", key(name)]);
+  } catch (e) {
+    console.error("[store] deleteProfile 실패:", (e as Error).message);
+  }
+}
+
+// 전체 유저 초기화
+export async function clearAll(): Promise<number> {
+  let n = 0;
+  for (const k of [...mem.keys()]) {
+    if (k.startsWith("lexio:user:")) {
+      mem.delete(k);
+      n++;
+    }
+  }
+  if (useRedis) {
+    try {
+      const keys = (await redis(["KEYS", "lexio:user:*"])) as string[];
+      if (keys && keys.length) {
+        await redis(["DEL", ...keys]);
+        n = keys.length;
+      }
+    } catch (e) {
+      console.error("[store] clearAll 실패:", (e as Error).message);
+    }
+  }
+  return n;
+}

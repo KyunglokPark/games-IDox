@@ -3,10 +3,11 @@
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { GameState, Tile, botMove, deal, pass, play } from "../src/engine/index.ts";
-import { getProfile, saveProfile, storageMode } from "./store.ts";
+import { getProfile, saveProfile, deleteProfile, clearAll, storageMode } from "./store.ts";
 
 const PORT = Number(process.env.PORT ?? 3001);
 const NEW_USER_COINS = 1000; // 신규 유저 지급 코인
+const ADMIN_KEY = process.env.ADMIN_KEY || ""; // 코인 초기화용 관리자 키 (없으면 기능 잠금)
 
 interface Seat {
   id: string;
@@ -325,6 +326,34 @@ const httpServer = createServer((req, res) => {
   if (req.method === "GET" && (req.url === "/" || req.url === "/health")) {
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
     res.end("Lexio server OK");
+    return;
+  }
+  // 코인 초기화: /admin/reset?key=<ADMIN_KEY>&name=<닉네임>  또는  &all=1
+  if (req.url && req.url.startsWith("/admin/reset")) {
+    const u = new URL(req.url, "http://localhost");
+    res.setHeader("content-type", "text/plain; charset=utf-8");
+    if (!ADMIN_KEY || u.searchParams.get("key") !== ADMIN_KEY) {
+      res.writeHead(403);
+      res.end("forbidden");
+      return;
+    }
+    const name = u.searchParams.get("name");
+    if (u.searchParams.get("all")) {
+      void clearAll().then((n) => {
+        res.writeHead(200);
+        res.end(`전체 코인 초기화 완료 (${n}명)`);
+      });
+      return;
+    }
+    if (name) {
+      void deleteProfile(name).then(() => {
+        res.writeHead(200);
+        res.end(`${name} 코인 초기화 완료 (다음 로그인 시 ${NEW_USER_COINS}코인)`);
+      });
+      return;
+    }
+    res.writeHead(400);
+    res.end("사용법: ?key=키&name=닉네임  또는  ?key=키&all=1");
     return;
   }
   res.writeHead(404);
