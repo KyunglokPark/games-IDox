@@ -36,7 +36,24 @@ export interface ErrorMsg {
   t: "error";
   msg: string;
 }
-export type ServerMsg = LobbyMsg | StateMsg | EndedMsg | ErrorMsg;
+export interface RoomInfo {
+  code: string;
+  name: string;
+  players: number;
+  max: number;
+  locked: boolean;
+  started: boolean;
+}
+export interface RoomsMsg {
+  t: "rooms";
+  list: RoomInfo[];
+}
+export interface LoggedInMsg {
+  t: "loggedin";
+  name: string;
+  coins: number;
+}
+export type ServerMsg = LobbyMsg | StateMsg | EndedMsg | ErrorMsg | RoomsMsg | LoggedInMsg;
 
 /**
  * 기본 서버 주소.
@@ -75,8 +92,20 @@ export class Net {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
 
-  join(room: string, name: string, pin: string) {
-    this.send({ t: "join", room, name, pin });
+  login(name: string, pin: string) {
+    this.send({ t: "login", name, pin });
+  }
+  listRooms() {
+    this.send({ t: "rooms" });
+  }
+  createRoom(password: string) {
+    this.send({ t: "createRoom", password });
+  }
+  joinRoom(code: string, password: string) {
+    this.send({ t: "joinRoom", code, password });
+  }
+  leaveRoom() {
+    this.send({ t: "leave" });
   }
   addBot() {
     this.send({ t: "addbot" });

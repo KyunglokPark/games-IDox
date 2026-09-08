@@ -41,8 +41,6 @@ body {
   position: fixed;
   top: 50%;
   left: 50%;
-  width: 820px;
-  height: 460px;
   display: flex;
   flex-direction: column;
   padding: 8px 14px 12px;
@@ -424,6 +422,22 @@ body {
 .card label {
   display: block;
   margin-top: 2px;
+}
+
+/* 방 목록 */
+.roomlist {
+  max-height: 200px;
+  overflow-y: auto;
+}
+.roomrow {
+  cursor: pointer;
+}
+.roomrow:not(.dis):active {
+  background: rgba(231, 200, 106, 0.22);
+}
+.roomrow.dis {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* 튜토리얼 */

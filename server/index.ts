@@ -19,6 +19,8 @@ interface Seat {
 }
 interface Room {
   code: string;
+  name: string;
+  password: string;
   seats: Seat[];
   hostId: string | null;
   state: GameState | null;
@@ -42,13 +44,39 @@ function pickBotName(room: Room): string {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function getRoom(code: string): Room {
-  let r = rooms.get(code);
-  if (!r) {
-    r = { code, seats: [], hostId: null, state: null, timer: null, turnTimer: null, turnDeadline: 0 };
-    rooms.set(code, r);
-  }
-  return r;
+let roomCounter = 0;
+function createRoom(hostName: string, password: string): Room {
+  const code = "R" + (++roomCounter).toString(36).toUpperCase() + Math.floor(Math.random() * 90 + 10);
+  const room: Room = {
+    code,
+    name: `${hostName}님의 방`,
+    password,
+    seats: [],
+    hostId: null,
+    state: null,
+    timer: null,
+    turnTimer: null,
+    turnDeadline: 0,
+  };
+  rooms.set(code, room);
+  return room;
+}
+
+// 사람이 있는 방 목록 (잠금·시작 여부 포함)
+function roomList() {
+  return [...rooms.values()]
+    .filter((r) => r.seats.some((s) => !s.isBot && s.ws && s.ws.readyState === WebSocket.OPEN))
+    .map((r) => ({
+      code: r.code,
+      name: r.name,
+      players: r.seats.filter((s) => !s.isBot).length,
+      max: 5,
+      locked: !!r.password,
+      started: !!r.state,
+    }));
+}
+function sendRooms(ws: WebSocket) {
+  send(ws, { t: "rooms", list: roomList() });
 }
 
 function send(ws: WebSocket | null, msg: unknown) {
@@ -231,17 +259,10 @@ function handleMove(room: Room, seatIndex: number, action: () => ReturnType<type
   progressTurn(room);
 }
 
-// ---------- 로그인/입장 (닉네임 + PIN 인증) ----------
-async function handleJoin(
-  ws: WebSocket,
-  msg: any,
-  setCtx: (c: { room: Room; seatId: string }) => void,
-) {
-  const room = getRoom(String(msg.room || "LOBBY").toUpperCase().slice(0, 8));
-  if (room.state) return send(ws, { t: "error", msg: "이미 시작된 방입니다" });
-  if (room.seats.filter((s) => !s.isBot).length >= 5)
-    return send(ws, { t: "error", msg: "방이 가득 찼습니다 (최대 5명)" });
+type Session = { name: string; pin: string; coins: number };
 
+// 로그인 (닉네임 + PIN 인증) → 세션 생성 + 방 목록 전송
+async function handleLogin(ws: WebSocket, msg: any, setSession: (s: Session) => void) {
   const name = String(msg.name || "").slice(0, 10).trim();
   const pin = String(msg.pin || "");
   if (!name) return send(ws, { t: "error", msg: "닉네임을 입력하세요" });
@@ -254,20 +275,47 @@ async function handleJoin(
     await saveProfile(name, { pin, coins: NEW_USER_COINS });
   }
   const coins = prof ? prof.coins : NEW_USER_COINS;
+  setSession({ name, pin, coins });
+  send(ws, { t: "loggedin", name, coins });
+  sendRooms(ws);
+}
 
+// 세션 유저를 방에 앉힘
+function seatUser(room: Room, s: Session, ws: WebSocket, setCtx: (c: { room: Room; seatId: string }) => void) {
   const seat: Seat = {
     id: `s${++seatCounter}`,
-    name,
+    name: s.name,
     isBot: false,
     ws,
-    coins,
-    pin,
-    authName: name,
+    coins: s.coins,
+    pin: s.pin,
+    authName: s.name,
   };
   room.seats.push(seat);
   if (!room.hostId) room.hostId = seat.id;
   setCtx({ room, seatId: seat.id });
   broadcastLobby(room);
+}
+
+// 방 나가기 (자발/접속끊김 공용): 좌석 정리 + 빈 방 삭제
+function leaveRoom(room: Room, seatId: string) {
+  const seat = room.seats.find((s) => s.id === seatId);
+  if (!seat) return;
+  if (room.state) {
+    seat.ws = null; // 게임 중이면 자동 대체
+    progressTurn(room);
+  } else {
+    const idx = room.seats.indexOf(seat);
+    if (idx >= 0) room.seats.splice(idx, 1);
+    if (room.hostId === seatId) room.hostId = room.seats.find((x) => !x.isBot)?.id ?? null;
+    broadcastLobby(room);
+  }
+  const humanOnline = room.seats.some((x) => !x.isBot && x.ws && x.ws.readyState === WebSocket.OPEN);
+  if (!humanOnline) {
+    clearTurnTimer(room);
+    if (room.timer) clearTimeout(room.timer);
+    rooms.delete(room.code);
+  }
 }
 
 // ---------- 연결 ----------
@@ -289,6 +337,7 @@ httpServer.listen(PORT, () =>
 );
 
 wss.on("connection", (ws) => {
+  let session: Session | null = null;
   let ctx: { room: Room; seatId: string } | null = null;
 
   ws.on("message", (raw) => {
@@ -299,16 +348,46 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    if (msg.t === "join") {
-      void handleJoin(ws, msg, (c) => (ctx = c));
+    if (msg.t === "login") {
+      void handleLogin(ws, msg, (s) => (session = s));
+      return;
+    }
+    if (!session) return send(ws, { t: "error", msg: "먼저 로그인하세요" });
+
+    // 방 밖: 목록 / 생성 / 입장
+    if (!ctx) {
+      if (msg.t === "rooms") return sendRooms(ws);
+      if (msg.t === "createRoom") {
+        const room = createRoom(session.name, String(msg.password || "").slice(0, 20));
+        seatUser(room, session, ws, (c) => (ctx = c));
+        return;
+      }
+      if (msg.t === "joinRoom") {
+        const room = rooms.get(String(msg.code || ""));
+        if (!room) return send(ws, { t: "error", msg: "존재하지 않는 방입니다" });
+        if (room.state) return send(ws, { t: "error", msg: "이미 시작된 방입니다" });
+        if (room.seats.filter((s) => !s.isBot).length >= 5)
+          return send(ws, { t: "error", msg: "방이 가득 찼습니다 (최대 5명)" });
+        if (room.password && room.password !== String(msg.password || ""))
+          return send(ws, { t: "error", msg: "방 비밀번호가 틀렸습니다" });
+        seatUser(room, session, ws, (c) => (ctx = c));
+        return;
+      }
       return;
     }
 
-    if (!ctx) return;
+    // 방 안: 액션
     const { room } = ctx;
     const seatIndex = room.seats.findIndex((s) => s.id === ctx!.seatId);
     if (seatIndex < 0) return;
     const isHost = room.hostId === ctx.seatId;
+
+    if (msg.t === "leave") {
+      leaveRoom(room, ctx.seatId);
+      ctx = null;
+      sendRooms(ws);
+      return;
+    }
 
     switch (msg.t) {
       case "addbot":
@@ -372,27 +451,6 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    if (!ctx) return;
-    const { room } = ctx;
-    const seat = room.seats.find((s) => s.id === ctx!.seatId);
-    if (!seat) return;
-    if (room.state) {
-      // 게임 중 이탈: 좌석 유지하되 자동 진행으로 대체
-      seat.ws = null;
-      progressTurn(room);
-    } else {
-      // 로비 중 이탈: 좌석 제거
-      const idx = room.seats.indexOf(seat);
-      room.seats.splice(idx, 1);
-      if (room.hostId === seat.id) room.hostId = room.seats.find((s) => !s.isBot)?.id ?? null;
-      broadcastLobby(room);
-    }
-    // 접속된 사람이 아무도 없으면 방 삭제 (봇만 남거나 전원 이탈)
-    const humanOnline = room.seats.some((s) => !s.isBot && s.ws && s.ws.readyState === WebSocket.OPEN);
-    if (!humanOnline) {
-      clearTurnTimer(room);
-      if (room.timer) clearTimeout(room.timer);
-      rooms.delete(room.code);
-    }
+    if (ctx) leaveRoom(ctx.room, ctx.seatId);
   });
 });

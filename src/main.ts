@@ -11,7 +11,7 @@ import {
   play,
   tileId,
 } from "./engine/index.ts";
-import { Net, ServerMsg, StateMsg, LobbyMsg, defaultServerUrl } from "./net.ts";
+import { Net, ServerMsg, StateMsg, LobbyMsg, RoomInfo, defaultServerUrl } from "./net.ts";
 
 const SUIT_SYMBOL = ["☁", "★", "☾", "☀"]; // 구름 별 달 해
 const COMBO_KR: Record<ComboType, string> = {
@@ -81,8 +81,8 @@ let activeIsMe = false;
 const net = new Net();
 let lobby: LobbyMsg | null = null;
 let view: StateMsg | null = null;
+let myCoins = 0;
 let netName = localStorage.getItem("idox.name") || "나";
-let netRoom = localStorage.getItem("idox.room") || "ROOM1";
 let netPin = localStorage.getItem("idox.pin") || "";
 
 // ---------- 타일/선택 유틸 ----------
@@ -312,11 +312,24 @@ function renderMenu() {
       <p class="sub">마작패로 즐기는 클라이밍 카드게임</p>
       <button class="btn" id="local" style="margin-bottom:10px">봇과 연습 (로컬)</button>
       <button class="btn ghost" id="online" style="margin-bottom:10px">친구와 온라인 대전</button>
-      <button class="btn ghost" id="tutorial">게임 방법</button>
+      <button class="btn ghost" id="tutorial" style="margin-bottom:10px">게임 방법</button>
+      <button class="btn ghost" id="fs">⛶ 전체화면 · 가로 고정</button>
     </div></div>`;
   app.querySelector("#local")!.addEventListener("click", renderLocalSetup);
   app.querySelector("#online")!.addEventListener("click", renderOnlineSetup);
   app.querySelector("#tutorial")!.addEventListener("click", renderTutorial);
+  app.querySelector("#fs")!.addEventListener("click", enterFullscreen);
+}
+
+// 전체화면 + 가로 고정 (지원 브라우저: 안드로이드 크롬 등). 키보드도 가로로 뜨게 됨.
+async function enterFullscreen() {
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+    const orient = (screen as unknown as { orientation?: { lock?: (o: string) => Promise<void> } }).orientation;
+    if (orient?.lock) await orient.lock("landscape").catch(() => {});
+  } catch {
+    /* 미지원 브라우저는 무시 */
+  }
 }
 
 // ---------- 튜토리얼 ----------
@@ -445,14 +458,12 @@ function renderOnlineSetup() {
   app.innerHTML = `
     <div class="overlay"><div class="card">
       <h1>온라인 대전</h1>
-      <p class="sub">같은 방 코드를 입력하면 함께 플레이</p>
+      <p class="sub">로그인 후 방을 만들거나 입장하세요</p>
       <label style="font-size:13px">닉네임</label>
       <input id="name" value="${netName}" maxlength="10" class="field" />
       <label style="font-size:13px">PIN (4자리 숫자)</label>
       <input id="pin" value="${netPin}" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="예: 1234" class="field" />
-      <label style="font-size:13px">방 코드</label>
-      <input id="room" value="${netRoom}" maxlength="8" class="field" />
-      <button class="btn" id="join">접속</button>
+      <button class="btn" id="join">로그인</button>
       <button class="btn ghost" id="back" style="margin-top:10px">뒤로</button>
       <p class="sub" id="neterr" style="margin-top:12px;color:#ef8a7a"></p>
     </div></div>`;
@@ -483,7 +494,6 @@ function renderOnlineSetup() {
   app.querySelector("#join")!.addEventListener("click", () => {
     netName = (app.querySelector("#name") as HTMLInputElement).value.trim() || "익명";
     netPin = (app.querySelector("#pin") as HTMLInputElement).dataset.real || "";
-    netRoom = ((app.querySelector("#room") as HTMLInputElement).value || "ROOM1").toUpperCase();
     if (!/^\d{4}$/.test(netPin)) {
       const err = app.querySelector("#neterr");
       if (err) err.textContent = "PIN은 4자리 숫자로 입력하세요";
@@ -491,7 +501,6 @@ function renderOnlineSetup() {
     }
     localStorage.setItem("idox.name", netName);
     localStorage.setItem("idox.pin", netPin);
-    localStorage.setItem("idox.room", netRoom);
     connectOnline();
   });
 }
@@ -500,7 +509,7 @@ function connectOnline() {
   mode = "online";
   lobby = null;
   view = null;
-  net.onOpen = () => net.join(netRoom, netName, netPin);
+  net.onOpen = () => net.login(netName, netPin);
   net.onClose = () => {
     const err = app.querySelector("#neterr");
     if (err) err.textContent = "서버 연결이 끊겼습니다";
@@ -511,6 +520,14 @@ function connectOnline() {
 
 function handleServer(m: ServerMsg) {
   switch (m.t) {
+    case "loggedin":
+      myCoins = m.coins;
+      break;
+    case "rooms":
+      lobby = null;
+      view = null;
+      renderRoomList(m.list);
+      break;
     case "lobby":
       lobby = m;
       view = null;
@@ -535,6 +552,50 @@ function handleServer(m: ServerMsg) {
   }
 }
 
+// ---------- 방 목록 ----------
+function renderRoomList(list: RoomInfo[]) {
+  const rows = list
+    .map((r) => {
+      const status = r.started ? `<span style="color:#ef8a7a">게임중</span>` : `${r.players}/${r.max}명`;
+      const dis = r.started || r.players >= r.max;
+      return `<div class="score-row roomrow ${dis ? "dis" : ""}" data-code="${r.code}" data-locked="${r.locked}">
+        <span>${r.locked ? "🔒 " : ""}${r.name}</span>
+        <span>${status}</span>
+      </div>`;
+    })
+    .join("");
+  app.innerHTML = `
+    <div class="overlay"><div class="card">
+      <h1>방 목록</h1>
+      <p class="sub">${netName} · ${myCoins}🪙</p>
+      <div class="roomlist">${rows || `<p class="sub" style="padding:14px 0">열린 방이 없어요. 새로 만들어 보세요!</p>`}</div>
+      <button class="btn" id="create" style="margin-top:12px">+ 새 방 만들기</button>
+      <div class="seg" style="margin-top:8px">
+        <button id="refresh">새로고침</button>
+        <button id="back">나가기</button>
+      </div>
+      <p class="sub" id="neterr" style="margin-top:8px;color:#ef8a7a"></p>
+    </div></div>`;
+  app.querySelectorAll(".roomrow:not(.dis)").forEach((el) => {
+    el.addEventListener("click", () => {
+      const code = (el as HTMLElement).dataset.code!;
+      const locked = (el as HTMLElement).dataset.locked === "true";
+      const pw = locked ? window.prompt("방 비밀번호를 입력하세요") ?? "" : "";
+      if (locked && pw === "") return;
+      net.joinRoom(code, pw);
+    });
+  });
+  app.querySelector("#create")!.addEventListener("click", () => {
+    const pw = window.prompt("방 비밀번호 (없으면 비워두고 확인)") ?? "";
+    net.createRoom(pw);
+  });
+  app.querySelector("#refresh")!.addEventListener("click", () => net.listRooms());
+  app.querySelector("#back")!.addEventListener("click", () => {
+    net.close();
+    renderMenu();
+  });
+}
+
 function renderWaiting() {
   if (!lobby) return;
   const isHost = lobby.you === lobby.host;
@@ -555,17 +616,14 @@ function renderWaiting() {
              <button class="btn" id="start" ${lobby.players.length >= 3 ? "" : "disabled"}>게임 시작</button>`
           : `<p class="sub" style="margin-top:14px">방장이 시작하기를 기다리는 중…</p>`
       }
-      <button class="btn ghost" id="leave" style="margin-top:10px">나가기</button>
+      <button class="btn ghost" id="leave" style="margin-top:10px">방 나가기 (목록으로)</button>
     </div></div>`;
   if (isHost) {
     app.querySelector("#addbot")!.addEventListener("click", () => net.addBot());
     app.querySelector("#rmbot")!.addEventListener("click", () => net.removeBot());
     app.querySelector("#start")!.addEventListener("click", () => net.start());
   }
-  app.querySelector("#leave")!.addEventListener("click", () => {
-    net.close();
-    renderMenu();
-  });
+  app.querySelector("#leave")!.addEventListener("click", () => net.leaveRoom());
 }
 
 // 상대 인원수별 좌석 위치(좌·상·우 분산)
@@ -790,23 +848,29 @@ function renderEndLocal(rows: ScoreRowLite[]) {
   overlay.querySelector("#menu")!.addEventListener("click", () => renderMenu());
 }
 
-// 가로(랜드스케이프) 기준 캔버스. 세로 화면(폰)은 90도 회전해 항상 가로로 보이게.
-const BASE_W = 820;
-const BASE_H = 460;
+// 게임=가로 캔버스, 메뉴·폼=세로 캔버스. 게임인데 폰이 세로면 90도 회전.
+const LAND_W = 820, LAND_H = 460; // 게임(가로)
+const PORT_W = 440, PORT_H = 780; // 메뉴·폼(세로) — 키보드 방향 일치
 function fitScale() {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  if (vh > vw) {
-    // 세로 화면 → 90도 회전해서 가로로 채움
-    const s = Math.min(vh / BASE_W, vw / BASE_H);
+  const isGame = !!document.getElementById("hand"); // 게임 화면이면 손패(#hand) 존재
+  const bw = isGame ? LAND_W : PORT_W;
+  const bh = isGame ? LAND_H : PORT_H;
+  app.style.width = bw + "px";
+  app.style.height = bh + "px";
+  const rotate = isGame && vh > vw; // 게임인데 폰이 세로면 90도 회전(가로로)
+  if (rotate) {
+    const s = Math.min(vh / bw, vw / bh);
     app.style.transform = `translate(-50%, -50%) rotate(90deg) scale(${s})`;
   } else {
-    const s = Math.min(vw / BASE_W, vh / BASE_H);
+    const s = Math.min(vw / bw, vh / bh);
     app.style.transform = `translate(-50%, -50%) rotate(0deg) scale(${s})`;
   }
 }
 window.addEventListener("resize", fitScale);
 window.addEventListener("orientationchange", fitScale);
+new MutationObserver(fitScale).observe(app, { childList: true }); // 화면 전환 시 방향 재계산
 fitScale();
 
 setInterval(updateTimers, 250); // 턴 카운트다운 갱신
