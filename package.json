@@ -1,9 +1,9 @@
 {
-  "name": "idox-lexio",
+  "name": "idox",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "렉시오(Lexio) - 웹 기반 모바일 최적화 온라인 멀티 카드/타일 게임",
+  "description": "IDox - 웹 기반 모바일 최적화 온라인 멀티 카드/타일 게임",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -14,10 +14,14 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "cordova-plugin-purchase": "^13.11.1",
     "tsx": "^4.19.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.1.0",
+    "@capacitor/cli": "^6.1.0",
+    "@capacitor/core": "^6.1.0",
     "@types/ws": "^8.5.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",

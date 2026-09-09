@@ -12,6 +12,7 @@ import {
   tileId,
 } from "./engine/index.ts";
 import { Net, ServerMsg, StateMsg, LobbyMsg, RoomInfo, defaultServerUrl } from "./net.ts";
+import { PACKS, initBilling, buy as buyPack, billingAvailable } from "./billing.ts";
 
 const SUIT_SYMBOL = ["☁", "★", "☾", "☀"]; // 구름 별 달 해
 const COMBO_KR: Record<ComboType, string> = {
@@ -84,10 +85,14 @@ let view: StateMsg | null = null;
 let myCoins = 0;
 let netName = localStorage.getItem("idox.name") || "나";
 let netPin = localStorage.getItem("idox.pin") || "";
+let storeOpen = false; // 코인 상점 화면 표시 중
+let bonusNote = ""; // 로그인 시 매일 지원 코인 알림
+let storeNote = ""; // 상점 구매 결과 알림
+let roomsView = false; // 온라인 대전(방 목록) 흐름 진행 중 (홈과 구분)
 
 // ---------- 타일/선택 유틸 ----------
 function tileHTML(t: Tile, opts: { small?: boolean; selected?: boolean; disabled?: boolean } = {}) {
-  const cls = ["tile", `s${t.suit}`, opts.small ? "small" : "", opts.selected ? "selected" : "", opts.disabled ? "disabled" : ""]
+  const cls = ["tile", `s${t.suit}`, t.num === 2 ? "two" : "", opts.small ? "small" : "", opts.selected ? "selected" : "", opts.disabled ? "disabled" : ""]
     .filter(Boolean)
     .join(" ");
   return `<div class="${cls}" data-id="${tileId(t)}"><span class="num">${t.num}</span><span class="suit">${SUIT_SYMBOL[t.suit]}</span></div>`;
@@ -129,11 +134,11 @@ function playableCombos(board: Board): Combo[] {
     ? allCombos(board.myHand, need.count).filter((c) => betterThan(c, need))
     : allCombos(board.myHand);
   list.sort((a, b) => {
-    if (a.count !== b.count) return b.count - a.count; // 장수 많은 것 먼저
-    if (a.category !== b.category) return b.category - a.category; // 족보 높은 것 먼저
+    if (a.count !== b.count) return a.count - b.count; // 장수 적은(작은) 것 먼저
+    if (a.category !== b.category) return a.category - b.category; // 족보 낮은 것 먼저
     for (let i = 0; i < Math.max(a.key.length, b.key.length); i++) {
-      const d = (b.key[i] ?? -1) - (a.key[i] ?? -1);
-      if (d !== 0) return d; // 같은 족보면 높은 것 먼저
+      const d = (a.key[i] ?? -1) - (b.key[i] ?? -1);
+      if (d !== 0) return d; // 같은 족보면 낮은 것 먼저
     }
     return 0;
   });
@@ -303,40 +308,74 @@ function scheduleBot() {
   }, 750);
 }
 
-// ---------- 렌더: 메뉴 ----------
-function renderMenu() {
-  mode = "menu";
-  app.innerHTML = `
-    <div class="overlay"><div class="card">
-      <h1>렉시오 <span style="color:var(--gold)">LEXIO</span></h1>
-      <p class="sub">마작패로 즐기는 클라이밍 카드게임</p>
-      <button class="btn" id="local" style="margin-bottom:10px">봇과 연습 (로컬)</button>
-      <button class="btn ghost" id="online" style="margin-bottom:10px">친구와 온라인 대전</button>
-      <button class="btn ghost" id="tutorial" style="margin-bottom:10px">게임 방법</button>
-      <button class="btn ghost" id="fs">⛶ 전체화면 · 가로 고정</button>
-    </div></div>`;
-  app.querySelector("#local")!.addEventListener("click", renderLocalSetup);
-  app.querySelector("#online")!.addEventListener("click", renderOnlineSetup);
-  app.querySelector("#tutorial")!.addEventListener("click", renderTutorial);
-  app.querySelector("#fs")!.addEventListener("click", enterFullscreen);
+// ---------- 렌더: 메뉴 (루미큐브 스타일 가로 홈) ----------
+// 카드 장식용 미니 타일
+function dtile(suit: number, num: number, cls = ""): string {
+  const two = num === 2 ? "two" : "";
+  return `<div class="tile s${suit} dtile ${two} ${cls}"><span class="num">${num}</span><span class="suit">${SUIT_SYMBOL[suit]}</span></div>`;
+}
+function artPractice(): string {
+  return `<div class="fan">${dtile(0, 3, "f1")}${dtile(2, 7, "f2")}${dtile(3, 9, "f3")}<span class="art-emoji">🤖</span></div>`;
+}
+function artPlay(): string {
+  return `<div class="fan">${dtile(3, 2, "f1")}${dtile(1, 10, "f2")}${dtile(2, 5, "f3")}<span class="art-emoji">🌐</span></div>`;
+}
+function artHowto(): string {
+  return `<div class="fan">${dtile(2, 7, "f2")}<span class="art-q">?</span></div>`;
 }
 
-// 전체화면 + 가로 고정 (지원 브라우저: 안드로이드 크롬 등). 키보드도 가로로 뜨게 됨.
-async function enterFullscreen() {
-  try {
-    if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
-    const orient = (screen as unknown as { orientation?: { lock?: (o: string) => Promise<void> } }).orientation;
-    if (orient?.lock) await orient.lock("landscape").catch(() => {});
-  } catch {
-    /* 미지원 브라우저는 무시 */
-  }
+function renderMenu() {
+  mode = "menu";
+  const initial = (netName[0] || "?").toUpperCase();
+  app.innerHTML = `
+    <div class="home">
+      <header class="home-top">
+        <div class="player-chip">
+          <span class="avatar">${initial}</span>
+          <span class="pname">${netName}</span>
+        </div>
+        <span class="coin-pill">🪙 ${myCoins}</span>
+      </header>
+      ${bonusNote ? `<div class="home-note">${bonusNote}</div>` : ""}
+      <div class="home-cards">
+        <button class="home-card c-practice" id="local">
+          <div class="card-art">${artPractice()}</div>
+          <div class="card-name">Practice</div>
+          <div class="card-desc">봇과 연습</div>
+        </button>
+        <button class="home-card c-play featured" id="online">
+          <div class="card-art">${artPlay()}</div>
+          <div class="card-name">Play Now</div>
+          <div class="card-desc">온라인 대전</div>
+        </button>
+        <button class="home-card c-howto" id="tutorial">
+          <div class="card-art">${artHowto()}</div>
+          <div class="card-name">How to play</div>
+          <div class="card-desc">게임 방법</div>
+        </button>
+      </div>
+      <footer class="home-foot"><span class="foot-logo">IDox</span></footer>
+    </div>`;
+  bonusNote = ""; // 한 번 보여주면 지움
+  app.querySelector("#local")!.addEventListener("click", renderLocalSetup);
+  app.querySelector("#online")!.addEventListener("click", goPlayNow);
+  app.querySelector("#tutorial")!.addEventListener("click", renderTutorial);
 }
+
+// Play Now: 이미 로그인된 세션으로 방 목록으로. 연결이 끊겼으면 재접속+재로그인.
+function goPlayNow() {
+  mode = "online";
+  roomsView = true;
+  if (net.isOpen()) net.listRooms();
+  else connectOnline();
+}
+
 
 // ---------- 튜토리얼 ----------
 function renderTutorial() {
   app.innerHTML = `
-    <div class="overlay"><div class="card">
-      <h1>게임 방법</h1>
+    <div class="scene"><div class="panel">
+      <h1>How to play</h1>
       <div class="tut">
         <h3>🎯 목표</h3>
         <p>손패를 가장 먼저 다 내려놓으면 승리! 남은 타일은 벌점(코인 차감)입니다.</p>
@@ -367,11 +406,16 @@ function renderTutorial() {
 
 function renderLocalSetup() {
   app.innerHTML = `
-    <div class="overlay"><div class="card">
-      <h1>봇과 연습</h1>
-      <p class="sub">인원 수를 고르세요</p>
-      <div class="seg" id="seg">
-        ${[3, 4, 5].map((n) => `<button data-n="${n}" class="${n === numPlayers ? "on" : ""}">${n}인</button>`).join("")}
+    <div class="scene"><div class="panel narrow">
+      <h1>Practice</h1>
+      <p class="sub">봇과 연습 · 인원 수를 고르세요</p>
+      <div class="count-row" id="seg">
+        ${[3, 4, 5]
+          .map(
+            (n) =>
+              `<button class="count-opt ${n === numPlayers ? "on" : ""}" data-n="${n}"><span class="cnum">${n}</span><span class="clbl">${n}인 플레이</span></button>`,
+          )
+          .join("")}
       </div>
       <button class="btn" id="start">시작</button>
       <button class="btn ghost" id="back" style="margin-top:10px">뒤로</button>
@@ -454,23 +498,19 @@ function endMatchAndReset() {
 }
 
 // ---------- 렌더: 온라인 로비 ----------
-function renderOnlineSetup() {
+function renderLogin() {
+  mode = "menu";
   app.innerHTML = `
-    <div class="overlay"><div class="card">
-      <h1>온라인 대전</h1>
-      <p class="sub">로그인 후 방을 만들거나 입장하세요</p>
-      <label style="font-size:13px">닉네임</label>
+    <div class="scene"><div class="panel narrow">
+      <h1 style="font-size:38px;letter-spacing:4px">IDox</h1>
+      <p class="sub">닉네임과 PIN으로 로그인하세요<br>코인은 계정에 저장됩니다</p>
+      <label>닉네임</label>
       <input id="name" value="${netName}" maxlength="10" class="field" />
-      <label style="font-size:13px">PIN (4자리 숫자)</label>
+      <label>PIN (4자리 숫자)</label>
       <input id="pin" value="${netPin}" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="예: 1234" class="field" />
-      <button class="btn" id="join">로그인</button>
-      <button class="btn ghost" id="back" style="margin-top:10px">뒤로</button>
+      <button class="btn" id="join" style="margin-top:6px">로그인</button>
       <p class="sub" id="neterr" style="margin-top:12px;color:#ef8a7a"></p>
     </div></div>`;
-  app.querySelector("#back")!.addEventListener("click", () => {
-    net.close();
-    renderMenu();
-  });
 
   // PIN 마스킹: 방금 입력한 글자만 보이고 다음 글자로 넘어가면 ●로 (실제값은 dataset.real)
   const pinInput = app.querySelector("#pin") as HTMLInputElement;
@@ -522,11 +562,18 @@ function handleServer(m: ServerMsg) {
   switch (m.t) {
     case "loggedin":
       myCoins = m.coins;
+      if (m.bonus) bonusNote = `🎁 매일 지원 코인 +${m.bonus} 지급! (코인이 0이어서)`;
+      if (storeOpen) {
+        storeNote = "구매가 완료되었습니다. 코인이 충전되었어요!";
+        renderStore();
+      } else if (!roomsView) {
+        renderMenu(); // 로그인 성공 → 홈으로 (Play Now 흐름이 아닐 때)
+      }
       break;
     case "rooms":
       lobby = null;
       view = null;
-      renderRoomList(m.list);
+      if (roomsView) renderRoomList(m.list); // 홈에선 로그인 직후 자동 rooms 무시
       break;
     case "lobby":
       lobby = m;
@@ -535,13 +582,17 @@ function handleServer(m: ServerMsg) {
       break;
     case "state":
       view = m;
+      myCoins = m.players[m.seat]?.coins ?? myCoins; // 방 목록 복귀 시 최신 잔액 유지
       selected.clear();
       message = "";
       renderGame();
       break;
-    case "ended":
+    case "ended": {
+      const mine = m.scores.find((r) => r.playerIndex === (view?.seat ?? -1));
+      if (mine) myCoins = mine.coins;
       setTimeout(() => renderEndOnline(m.scores), 400);
       break;
+    }
     case "error": {
       message = m.msg;
       const err = app.querySelector("#neterr");
@@ -564,10 +615,20 @@ function renderRoomList(list: RoomInfo[]) {
       </div>`;
     })
     .join("");
+  storeOpen = false;
+  const note = bonusNote ? `<p class="sub" style="color:var(--gold);margin-top:2px">${bonusNote}</p>` : "";
+  bonusNote = "";
   app.innerHTML = `
-    <div class="overlay"><div class="card">
-      <h1>방 목록</h1>
-      <p class="sub">${netName} · ${myCoins}🪙</p>
+    <div class="scene"><div class="panel">
+      <div class="panel-head">
+        <h1>방 목록</h1>
+        <span style="display:flex;align-items:center;gap:8px">
+          <span class="coin-pill">🪙 ${myCoins}</span>
+          <button class="btn get-coins" id="store">＋ GET COINS</button>
+        </span>
+      </div>
+      <p class="sub"><b style="color:#eaf2ff">${netName}</b>님, 방에 입장하거나 새로 만드세요</p>
+      ${note}
       <div class="roomlist">${rows || `<p class="sub" style="padding:14px 0">열린 방이 없어요. 새로 만들어 보세요!</p>`}</div>
       <button class="btn" id="create" style="margin-top:12px">+ 새 방 만들기</button>
       <div class="seg" style="margin-top:8px">
@@ -576,6 +637,7 @@ function renderRoomList(list: RoomInfo[]) {
       </div>
       <p class="sub" id="neterr" style="margin-top:8px;color:#ef8a7a"></p>
     </div></div>`;
+  app.querySelector("#store")!.addEventListener("click", () => renderStore());
   app.querySelectorAll(".roomrow:not(.dis)").forEach((el) => {
     el.addEventListener("click", () => {
       const code = (el as HTMLElement).dataset.code!;
@@ -591,8 +653,50 @@ function renderRoomList(list: RoomInfo[]) {
   });
   app.querySelector("#refresh")!.addEventListener("click", () => net.listRooms());
   app.querySelector("#back")!.addEventListener("click", () => {
-    net.close();
-    renderMenu();
+    roomsView = false;
+    renderMenu(); // 홈으로 (연결 유지)
+  });
+}
+
+// ---------- 코인 상점 (구글 플레이 인앱 결제) ----------
+function renderStore() {
+  storeOpen = true;
+  const avail = billingAvailable();
+  const note = storeNote ? `<p class="sub" style="color:var(--gold);margin-top:6px">${storeNote}</p>` : "";
+  storeNote = "";
+  const packs = PACKS.map(
+    (p) => `
+      <div class="score-row pack">
+        <span><b style="color:var(--gold);font-size:17px">${p.coins}🪙</b></span>
+        <span>${p.price} &nbsp;<button class="btn mini buy" data-id="${p.id}" ${avail ? "" : "disabled"}>구매</button></span>
+      </div>`,
+  ).join("");
+  app.innerHTML = `
+    <div class="scene"><div class="panel narrow">
+      <div class="panel-head">
+        <h1>코인 상점</h1>
+        <span class="coin-pill">🪙 ${myCoins}</span>
+      </div>
+      <p class="sub">${netName}님의 코인을 충전하세요</p>
+      ${note}
+      <div class="roomlist">${packs}</div>
+      ${
+        avail
+          ? `<p class="sub" style="margin-top:10px;font-size:12px">구글 플레이로 안전하게 결제됩니다.</p>`
+          : `<p class="sub" style="margin-top:10px;color:#ef8a7a;font-size:12px">구매는 설치된 앱(구글 플레이)에서만 가능합니다.</p>`
+      }
+      <button class="btn ghost" id="back" style="margin-top:12px">방 목록으로</button>
+    </div></div>`;
+  app.querySelectorAll(".buy").forEach((el) =>
+    el.addEventListener("click", () => {
+      storeNote = "결제를 진행합니다…";
+      buyPack((el as HTMLElement).dataset.id!);
+      renderStore();
+    }),
+  );
+  app.querySelector("#back")!.addEventListener("click", () => {
+    storeOpen = false;
+    net.listRooms();
   });
 }
 
@@ -603,7 +707,7 @@ function renderWaiting() {
     .map((p, i) => `<div class="score-row"><span>${p.isBot ? "🤖 " : "👤 "}${p.name}${i === lobby!.you ? " (나)" : ""}${i === lobby!.host ? " · 방장" : ""}</span></div>`)
     .join("");
   app.innerHTML = `
-    <div class="overlay"><div class="card">
+    <div class="scene"><div class="panel">
       <h1>대기실 · ${lobby.room}</h1>
       <p class="sub">${lobby.players.length}명 · 3~5명이면 시작 가능</p>
       ${list}
@@ -767,8 +871,9 @@ function confirmExit() {
   </div>`;
   app.appendChild(overlay);
   overlay.querySelector("#yes")!.addEventListener("click", () => {
-    net.close();
-    renderMenu();
+    if (mode === "online") net.leaveRoom(); // 방만 떠나고 연결은 유지
+    roomsView = false;
+    renderMenu(); // 홈으로
   });
   overlay.querySelector("#no")!.addEventListener("click", () => overlay.remove());
 }
@@ -811,8 +916,9 @@ function renderEndOnline(
     });
   }
   overlay.querySelector("#menu")!.addEventListener("click", () => {
-    net.close();
-    renderMenu();
+    net.leaveRoom(); // 방만 떠나고 연결 유지
+    roomsView = false;
+    renderMenu(); // 홈으로
   });
 }
 
@@ -848,23 +954,19 @@ function renderEndLocal(rows: ScoreRowLite[]) {
   overlay.querySelector("#menu")!.addEventListener("click", () => renderMenu());
 }
 
-// 게임=가로 캔버스, 메뉴·폼=세로 캔버스. 게임인데 폰이 세로면 90도 회전.
-const LAND_W = 820, LAND_H = 460; // 게임(가로)
-const PORT_W = 440, PORT_H = 780; // 메뉴·폼(세로) — 키보드 방향 일치
+// 모든 화면을 가로 캔버스로 통일. 폰이 세로면 90도 회전해 항상 가로로 보이게.
+const LAND_W = 820, LAND_H = 460;
 function fitScale() {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const isGame = !!document.getElementById("hand"); // 게임 화면이면 손패(#hand) 존재
-  const bw = isGame ? LAND_W : PORT_W;
-  const bh = isGame ? LAND_H : PORT_H;
-  app.style.width = bw + "px";
-  app.style.height = bh + "px";
-  const rotate = isGame && vh > vw; // 게임인데 폰이 세로면 90도 회전(가로로)
-  if (rotate) {
-    const s = Math.min(vh / bw, vw / bh);
+  const portrait = vh > vw;
+  app.style.width = LAND_W + "px";
+  app.style.height = LAND_H + "px";
+  if (portrait) {
+    const s = Math.min(vh / LAND_W, vw / LAND_H);
     app.style.transform = `translate(-50%, -50%) rotate(90deg) scale(${s})`;
   } else {
-    const s = Math.min(vw / bw, vh / bh);
+    const s = Math.min(vw / LAND_W, vh / LAND_H);
     app.style.transform = `translate(-50%, -50%) rotate(0deg) scale(${s})`;
   }
 }
@@ -875,4 +977,7 @@ fitScale();
 
 setInterval(updateTimers, 250); // 턴 카운트다운 갱신
 
-renderMenu();
+initBilling((productId) => net.buyCoins(productId)); // 결제 승인 → 서버에 코인 지급 요청
+
+// 시작: 로그인 화면부터 (로그인 성공 시 홈으로)
+renderLogin();

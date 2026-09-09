@@ -1,4 +1,4 @@
-# 렉시오 (Lexio) · IDox
+# IDox
 
 마작패로 즐기는 클라이밍 카드게임. 웹 기술(Vite + TypeScript) 기반, 모바일 세로화면 최적화, 봇 연습 + 온라인 멀티(권한 서버) 지원.
 
@@ -31,7 +31,7 @@ BOT_MS=0 npm run server  # 봇 즉시 (테스트용)
     ```powershell
     # <WSL_IP> = WSL에서 `hostname -I` 로 확인 (예: 172.29.118.84)
     netsh interface portproxy add v4tov4 listenport=3001 listenaddress=0.0.0.0 connectport=3001 connectaddress=<WSL_IP>
-    netsh advfirewall firewall add rule name="Lexio3001" dir=in action=allow protocol=TCP localport=3001
+    netsh advfirewall firewall add rule name="IDox3001" dir=in action=allow protocol=TCP localport=3001
     ```
     이제 다른 기기는 `ws://<Windows PC의 LAN IP>:3001` 로 접속.
 

@@ -3,3 +3,12 @@ dist/
 *.log
 .DS_Store
 _smoke.ts
+.idea/
+# Android 서명 키스토어 (절대 커밋 금지)
+idox-release
+*.jks
+*.keystore
+keystore.properties
+# Android 빌드 산출물 잔여
+android/app/release/
+android/app/src/main/assets/public/

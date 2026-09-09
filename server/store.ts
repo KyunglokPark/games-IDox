@@ -2,6 +2,7 @@
 export interface Profile {
   pin: string;
   coins: number;
+  lastBonus?: string; // 매일 지원 코인 마지막 지급일 (YYYY-MM-DD, KST)
 }
 
 const REST_URL = process.env.UPSTASH_REDIS_REST_URL;

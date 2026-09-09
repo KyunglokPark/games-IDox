@@ -1,4 +1,4 @@
-// 렉시오 게임 상태 및 진행 로직 (순수 함수형 리듀서 스타일)
+// IDox 게임 상태 및 진행 로직 (순수 함수형 리듀서 스타일)
 import { Combo, Tile } from "./types.ts";
 import { buildDeck, ruleForPlayers, sortByStrength, tileId } from "./tiles.ts";
 import { beats, evaluate } from "./combos.ts";

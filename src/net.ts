@@ -52,12 +52,13 @@ export interface LoggedInMsg {
   t: "loggedin";
   name: string;
   coins: number;
+  bonus?: number; // 매일 지원 코인 지급액(있을 때만)
 }
 export type ServerMsg = LobbyMsg | StateMsg | EndedMsg | ErrorMsg | RoomsMsg | LoggedInMsg;
 
 /**
  * 기본 서버 주소.
- * - 배포 빌드: `VITE_SERVER_URL`(예: wss://lexio.onrender.com) 주입값 사용.
+ * - 배포 빌드: `VITE_SERVER_URL`(예: wss://lexio-server.onrender.com) 주입값 사용.
  * - 로컬 개발: 같은 호스트의 3001 포트.
  * 사용자는 온라인 화면의 "서버 주소" 입력으로 항상 덮어쓸 수 있다.
  */
@@ -88,6 +89,10 @@ export class Net {
     };
   }
 
+  isOpen() {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
   private send(msg: unknown) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
   }
@@ -97,6 +102,9 @@ export class Net {
   }
   listRooms() {
     this.send({ t: "rooms" });
+  }
+  buyCoins(productId: string) {
+    this.send({ t: "buyCoins", productId });
   }
   createRoom(password: string) {
     this.send({ t: "createRoom", password });

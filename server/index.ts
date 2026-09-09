@@ -1,4 +1,4 @@
-// 렉시오 권한 서버 (authoritative). 순수 ws, 이식성 우선.
+// IDox 권한 서버 (authoritative). 순수 ws, 이식성 우선.
 // 실행: npm run server  (tsx server/index.ts)
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -6,8 +6,21 @@ import { GameState, Tile, botMove, deal, pass, play } from "../src/engine/index.
 import { getProfile, saveProfile, deleteProfile, clearAll, storageMode } from "./store.ts";
 
 const PORT = Number(process.env.PORT ?? 3001);
-const NEW_USER_COINS = 1000; // 신규 유저 지급 코인
+const NEW_USER_COINS = 100; // 신규 유저 지급 코인
+const DAILY_BONUS = 10; // 코인 0일 때 매일 지급량
 const ADMIN_KEY = process.env.ADMIN_KEY || ""; // 코인 초기화용 관리자 키 (없으면 기능 잠금)
+
+// 코인 상품(구글 플레이 인앱): 상품ID → 지급 코인. 금액은 Play Console에서 설정.
+const COIN_PACKS: Record<string, number> = {
+  coins_100: 100, // ₩2,000
+  coins_1000: 1000, // ₩10,000
+  coins_5000: 5000, // ₩30,000
+};
+
+// 오늘 날짜(KST, YYYY-MM-DD) — "매일" 경계는 한국시간 기준
+function todayKST(): string {
+  return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
 
 interface Seat {
   id: string;
@@ -17,6 +30,7 @@ interface Seat {
   coins: number;
   pin: string; // 봇은 ""
   authName: string; // 프로필 저장 키 (봇은 "")
+  lastBonus: string; // 매일 지원 코인 마지막 지급일 (봇은 "")
 }
 interface Room {
   code: string;
@@ -144,7 +158,7 @@ async function finishGame(room: Room) {
   for (let i = 0; i < room.seats.length; i++) {
     const s = room.seats[i];
     s.coins = Math.max(0, s.coins + deltas[i]);
-    if (!s.isBot && s.authName) await saveProfile(s.authName, { pin: s.pin, coins: s.coins });
+    if (!s.isBot && s.authName) await saveProfile(s.authName, { pin: s.pin, coins: s.coins, lastBonus: s.lastBonus });
   }
 
   room.seats.forEach((s, i) => send(s.ws, viewFor(room, i))); // 갱신된 코인 반영된 최종 상태
@@ -260,7 +274,7 @@ function handleMove(room: Room, seatIndex: number, action: () => ReturnType<type
   progressTurn(room);
 }
 
-type Session = { name: string; pin: string; coins: number };
+type Session = { name: string; pin: string; coins: number; lastBonus: string };
 
 // 로그인 (닉네임 + PIN 인증) → 세션 생성 + 방 목록 전송
 async function handleLogin(ws: WebSocket, msg: any, setSession: (s: Session) => void) {
@@ -270,14 +284,22 @@ async function handleLogin(ws: WebSocket, msg: any, setSession: (s: Session) => 
   if (!/^\d{4}$/.test(pin)) return send(ws, { t: "error", msg: "PIN 4자리 숫자를 입력하세요" });
 
   const prof = await getProfile(name);
-  if (prof) {
-    if (prof.pin !== pin) return send(ws, { t: "error", msg: "PIN이 일치하지 않습니다" });
-  } else {
-    await saveProfile(name, { pin, coins: NEW_USER_COINS });
+  if (prof && prof.pin !== pin) return send(ws, { t: "error", msg: "PIN이 일치하지 않습니다" });
+
+  let coins = prof ? prof.coins : NEW_USER_COINS;
+  let lastBonus = prof?.lastBonus ?? "";
+  let bonus = 0;
+  const today = todayKST();
+  // 코인이 0이면 하루 한 번 지원 코인 지급
+  if (coins === 0 && lastBonus !== today) {
+    coins = DAILY_BONUS;
+    bonus = DAILY_BONUS;
+    lastBonus = today;
   }
-  const coins = prof ? prof.coins : NEW_USER_COINS;
-  setSession({ name, pin, coins });
-  send(ws, { t: "loggedin", name, coins });
+  if (!prof || bonus) await saveProfile(name, { pin, coins, lastBonus });
+
+  setSession({ name, pin, coins, lastBonus });
+  send(ws, { t: "loggedin", name, coins, bonus });
   sendRooms(ws);
 }
 
@@ -291,6 +313,7 @@ function seatUser(room: Room, s: Session, ws: WebSocket, setCtx: (c: { room: Roo
     coins: s.coins,
     pin: s.pin,
     authName: s.name,
+    lastBonus: s.lastBonus,
   };
   room.seats.push(seat);
   if (!room.hostId) room.hostId = seat.id;
@@ -325,7 +348,7 @@ function leaveRoom(room: Room, seatId: string) {
 const httpServer = createServer((req, res) => {
   if (req.method === "GET" && (req.url === "/" || req.url === "/health")) {
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-    res.end("Lexio server OK");
+    res.end("IDox server OK");
     return;
   }
   // 코인 초기화: /admin/reset?key=<ADMIN_KEY>&name=<닉네임>  또는  &all=1
@@ -362,7 +385,7 @@ const httpServer = createServer((req, res) => {
 
 const wss = new WebSocketServer({ server: httpServer });
 httpServer.listen(PORT, () =>
-  console.log(`[렉시오 서버] :${PORT} 대기 중 (http+ws) · 저장소: ${storageMode()}`),
+  console.log(`[IDox 서버] :${PORT} 대기 중 (http+ws) · 저장소: ${storageMode()}`),
 );
 
 wss.on("connection", (ws) => {
@@ -382,6 +405,26 @@ wss.on("connection", (ws) => {
       return;
     }
     if (!session) return send(ws, { t: "error", msg: "먼저 로그인하세요" });
+
+    // 코인 구매(구글 플레이 결제 승인 후) → 상품ID로 지급. 금액은 서버가 결정(위조 방지).
+    // 주의: 프로덕션에선 구매 토큰을 구글 Play Developer API로 검증하는 것이 안전합니다(가이드 참고).
+    if (msg.t === "buyCoins") {
+      const amt = COIN_PACKS[String(msg.productId || "")];
+      if (!amt) return send(ws, { t: "error", msg: "알 수 없는 상품입니다" });
+      void (async () => {
+        const s = session!;
+        const prof = await getProfile(s.name); // 저장된 잔액을 기준으로 지급(중복/역행 방지)
+        const next = (prof ? prof.coins : s.coins) + amt;
+        s.coins = next;
+        await saveProfile(s.name, { pin: s.pin, coins: next, lastBonus: s.lastBonus });
+        if (ctx) {
+          const seat = ctx.room.seats.find((x) => x.id === ctx!.seatId);
+          if (seat) seat.coins = next;
+        }
+        send(ws, { t: "loggedin", name: s.name, coins: next });
+      })();
+      return;
+    }
 
     // 방 밖: 목록 / 생성 / 입장
     if (!ctx) {
@@ -422,7 +465,7 @@ wss.on("connection", (ws) => {
       case "addbot":
         if (!isHost || room.state) break;
         if (room.seats.length >= 5) break;
-        room.seats.push({ id: `b${++seatCounter}`, name: pickBotName(room), isBot: true, ws: null, coins: NEW_USER_COINS, pin: "", authName: "" });
+        room.seats.push({ id: `b${++seatCounter}`, name: pickBotName(room), isBot: true, ws: null, coins: NEW_USER_COINS, pin: "", authName: "", lastBonus: "" });
         broadcastLobby(room);
         break;
       case "removebot":
