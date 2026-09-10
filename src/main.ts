@@ -397,7 +397,7 @@ function renderTutorial() {
         <p>승자가 판돈을 모두 가져가고, 나머지는 <b>남은 타일 수</b>만큼 잃습니다. 손패에 <b>2</b>가 있으면 <b>2배</b>로 잃어요!</p>
 
         <h3>⏱ 시간 · 도우미</h3>
-        <p>턴당 <b>30초</b>, 넘기면 자동 패스. <b>PAIR</b> 버튼은 낼 수 있는 조합을 강한 순으로 자동 선택(다시 누르면 다음 조합), <b>1234</b>는 선택 해제입니다.</p>
+        <p>턴당 <b>30초</b>, 넘기면 자동 패스. <b>PAIR</b> 버튼은 낼 수 있는 조합을 자동 선택(다시 누르면 다음 조합)해 줍니다. 타일을 다시 탭하면 선택이 해제됩니다.</p>
       </div>
       <button class="btn" id="back" style="margin-top:12px">닫기</button>
     </div></div>`;
@@ -830,7 +830,6 @@ function renderGame() {
         <button class="btn ghost" id="pass" ${board.myTurn && board.lastPlayCombo ? "" : "disabled"}>패스</button>
         <button class="btn" id="play" ${board.myTurn && canPlay ? "" : "disabled"}>내기</button>
         <div class="action-side">
-          <button class="btn mini" id="sort" ${board.myTurn ? "" : "disabled"}>1234</button>
           <button class="btn mini" id="combo" ${board.myTurn ? "" : "disabled"}>PAIR</button>
         </div>
       </div>
@@ -849,11 +848,6 @@ function renderGame() {
     });
     app.querySelector("#play")!.addEventListener("click", () => doPlay(selectedTiles(board)));
     app.querySelector("#pass")!.addEventListener("click", doPass);
-    app.querySelector("#sort")!.addEventListener("click", () => {
-      selected.clear();
-      message = "";
-      renderGame();
-    });
     app.querySelector("#combo")!.addEventListener("click", () => cycleCombo(board));
   }
 }
