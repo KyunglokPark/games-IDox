@@ -42,7 +42,10 @@ interface Room {
   timer: ReturnType<typeof setTimeout> | null; // 봇 자동 진행
   turnTimer: ReturnType<typeof setTimeout> | null; // 사람 15초 타임아웃
   turnDeadline: number; // 현재 턴 마감 시각(epoch ms), 0 = 없음
+  abandonTimer: ReturnType<typeof setTimeout> | null; // 게임 중 전원 이탈 시 정리 유예
 }
+
+const ABANDON_MS = 180000; // 게임 중 전원 이탈 후 방을 유지하는 시간(재접속 대기)
 
 const rooms = new Map<string, Room>();
 let seatCounter = 0;
@@ -72,6 +75,7 @@ function createRoom(hostName: string, password: string): Room {
     timer: null,
     turnTimer: null,
     turnDeadline: 0,
+    abandonTimer: null,
   };
   rooms.set(code, room);
   return room;
@@ -276,8 +280,13 @@ function handleMove(room: Room, seatIndex: number, action: () => ReturnType<type
 
 type Session = { name: string; pin: string; coins: number; lastBonus: string };
 
-// 로그인 (닉네임 + PIN 인증) → 세션 생성 + 방 목록 전송
-async function handleLogin(ws: WebSocket, msg: any, setSession: (s: Session) => void) {
+// 로그인 (닉네임 + PIN 인증) → 세션 생성 + (진행 중 게임 복귀 | 방 목록 전송)
+async function handleLogin(
+  ws: WebSocket,
+  msg: any,
+  setSession: (s: Session) => void,
+  resume: (s: Session) => boolean,
+) {
   const name = String(msg.name || "").slice(0, 10).trim();
   const pin = String(msg.pin || "");
   if (!name) return send(ws, { t: "error", msg: "닉네임을 입력하세요" });
@@ -298,8 +307,10 @@ async function handleLogin(ws: WebSocket, msg: any, setSession: (s: Session) => 
   }
   if (!prof || bonus) await saveProfile(name, { pin, coins, lastBonus });
 
-  setSession({ name, pin, coins, lastBonus });
+  const session: Session = { name, pin, coins, lastBonus };
+  setSession(session);
   send(ws, { t: "loggedin", name, coins, bonus });
+  if (resume(session)) return; // 진행 중 게임으로 복귀 시 방 목록 대신 게임 상태 전송
   sendRooms(ws);
 }
 
@@ -337,9 +348,39 @@ function leaveRoom(room: Room, seatId: string) {
   const humanOnline = room.seats.some((x) => !x.isBot && x.ws && x.ws.readyState === WebSocket.OPEN);
   if (!humanOnline) {
     clearTurnTimer(room);
-    if (room.timer) clearTimeout(room.timer);
-    rooms.delete(room.code);
+    if (room.timer) {
+      clearTimeout(room.timer);
+      room.timer = null;
+    }
+    if (room.state && room.state.phase === "playing") {
+      // 게임 진행 중 전원 이탈 → 즉시 삭제하지 않고 잠시 유지(재접속하면 이어서 진행)
+      room.turnDeadline = 0;
+      if (!room.abandonTimer) room.abandonTimer = setTimeout(() => rooms.delete(room.code), ABANDON_MS);
+    } else {
+      rooms.delete(room.code);
+    }
   }
+}
+
+// 진행 중 게임에 끊긴 자리(같은 닉네임)가 있으면 그 자리로 재접속시켜 이어서 진행
+function tryResume(ws: WebSocket, s: Session, setCtx: (c: { room: Room; seatId: string }) => void): boolean {
+  for (const room of rooms.values()) {
+    if (!room.state) continue;
+    const seat = room.seats.find(
+      (x) => !x.isBot && x.authName === s.name && (!x.ws || x.ws.readyState !== WebSocket.OPEN),
+    );
+    if (!seat) continue;
+    if (room.abandonTimer) {
+      clearTimeout(room.abandonTimer);
+      room.abandonTimer = null;
+    }
+    seat.ws = ws;
+    setCtx({ room, seatId: seat.id });
+    broadcastLobby(room); // 방장/좌석 정보
+    progressTurn(room); // 타이머·자동진행 재계산 + 현재 상태 브로드캐스트(게임 화면 복귀)
+    return true;
+  }
+  return false;
 }
 
 // ---------- 연결 ----------
@@ -401,7 +442,12 @@ wss.on("connection", (ws) => {
     }
 
     if (msg.t === "login") {
-      void handleLogin(ws, msg, (s) => (session = s));
+      void handleLogin(
+        ws,
+        msg,
+        (s) => (session = s),
+        (s) => tryResume(ws, s, (c) => (ctx = c)),
+      );
       return;
     }
     if (!session) return send(ws, { t: "error", msg: "먼저 로그인하세요" });

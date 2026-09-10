@@ -551,8 +551,12 @@ function connectOnline() {
   view = null;
   net.onOpen = () => net.login(netName, netPin);
   net.onClose = () => {
-    const err = app.querySelector("#neterr");
-    if (err) err.textContent = "서버 연결이 끊겼습니다";
+    if (mode === "online" && (view || lobby)) {
+      showReconnect(); // 게임/대기 중 끊김 → 재접속 안내 (다시 로그인하면 이어서 진행)
+    } else {
+      const err = app.querySelector("#neterr");
+      if (err) err.textContent = "서버 연결이 끊겼습니다";
+    }
   };
   net.onMessage = handleServer;
   net.connect(defaultServerUrl());
@@ -582,6 +586,7 @@ function handleServer(m: ServerMsg) {
       break;
     case "state":
       view = m;
+      if (mode !== "local") mode = "online"; // 재접속 복귀 시에도 온라인으로 처리
       myCoins = m.players[m.seat]?.coins ?? myCoins; // 방 목록 복귀 시 최신 잔액 유지
       selected.clear();
       message = "";
@@ -773,6 +778,7 @@ function renderGame() {
   activeIsMe = board.myTurn;
 
   const { canPlay, hint } = evalSelection(board);
+  const hasPlayable = board.myTurn && playableCombos(board).length > 0; // 낼 수 있는 조합 존재 여부
 
   // 상대를 내 다음 좌석부터 시계방향으로 나열 후, 좌·상·우 슬롯에 분산 배치
   const order: BoardPlayer[] = [];
@@ -827,10 +833,10 @@ function renderGame() {
         <span class="my-timer" id="my-timer"></span>
       </div>
       <div class="actions">
-        <button class="btn ghost" id="pass" ${board.myTurn && board.lastPlayCombo ? "" : "disabled"}>패스</button>
+        <button class="btn" id="pass" ${board.myTurn ? "" : "disabled"}>패스</button>
         <button class="btn" id="play" ${board.myTurn && canPlay ? "" : "disabled"}>내기</button>
         <div class="action-side">
-          <button class="btn mini" id="combo" ${board.myTurn ? "" : "disabled"}>PAIR</button>
+          <button class="btn mini" id="combo" ${hasPlayable ? "" : "disabled"}>PAIR</button>
         </div>
       </div>
     </div>`;
@@ -850,6 +856,33 @@ function renderGame() {
     app.querySelector("#pass")!.addEventListener("click", doPass);
     app.querySelector("#combo")!.addEventListener("click", () => cycleCombo(board));
   }
+}
+
+// 연결 끊김 안내 — 다시 접속하면 서버가 원래 자리로 복귀시켜 이어서 진행
+function showReconnect() {
+  if (document.getElementById("reconnect-ov")) return;
+  const ov = document.createElement("div");
+  ov.className = "overlay";
+  ov.id = "reconnect-ov";
+  ov.innerHTML = `<div class="card" style="text-align:center">
+    <h1 style="font-size:20px">연결이 끊겼습니다</h1>
+    <p class="sub" id="rc-msg">다시 접속하면 게임을 이어서 할 수 있어요</p>
+    <button class="btn" id="rc-retry" style="margin-top:12px">다시 접속</button>
+    <button class="btn ghost" id="rc-menu" style="margin-top:10px">메뉴로</button>
+  </div>`;
+  app.appendChild(ov);
+  ov.querySelector("#rc-retry")!.addEventListener("click", () => {
+    const msg = ov.querySelector("#rc-msg");
+    if (msg) msg.textContent = "재접속 중…";
+    roomsView = true; // 복귀 실패(방 사라짐) 시 방 목록으로 폴백
+    connectOnline(); // 재로그인 → 서버가 진행 중 게임으로 복귀시켜 state 전송
+  });
+  ov.querySelector("#rc-menu")!.addEventListener("click", () => {
+    roomsView = false;
+    view = null;
+    lobby = null;
+    renderMenu();
+  });
 }
 
 // 나가기 확인
