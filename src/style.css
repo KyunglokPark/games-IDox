@@ -389,7 +389,9 @@ body {
   font-size: 22px;
   font-weight: 800;
   letter-spacing: 1px;
-  box-shadow: 0 2px 0 #a9873c;
+  background: rgba(255, 255, 255, 0.16);
+  color: #f2f2f2;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
 }
 .btn:active {
   transform: translateY(2px);

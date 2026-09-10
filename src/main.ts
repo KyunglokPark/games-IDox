@@ -834,7 +834,7 @@ function renderGame() {
       </div>
       <div class="actions">
         <button class="btn ghost" id="pass" ${board.myTurn ? "" : "disabled"}>패스</button>
-        <button class="btn ghost" id="play" ${board.myTurn && canPlay ? "" : "disabled"}>내기</button>
+        <button class="btn" id="play" ${board.myTurn && canPlay ? "" : "disabled"}>내기</button>
         <div class="action-side">
           <button class="btn mini" id="combo" ${hasPlayable ? "" : "disabled"}>PAIR</button>
         </div>
