@@ -66,11 +66,22 @@ describe("5장 조합 족보", () => {
     expect(beats(evaluate(wrap)!, evaluate(high)!)).toBe(true);
   });
 
-  it("1-2-3-4-5 는 가장 약한 스트레이트", () => {
-    const low = [T(1, Suit.Cloud), T(2, Suit.Star), T(3, Suit.Moon), T(4, Suit.Sun), T(5, Suit.Cloud)];
-    const next = [T(2, Suit.Cloud), T(3, Suit.Star), T(4, Suit.Moon), T(5, Suit.Sun), T(6, Suit.Cloud)];
-    expect(evaluate(low)!.type).toBe("straight");
-    expect(beats(evaluate(next)!, evaluate(low)!)).toBe(true);
+  it("2를 포함한 스트레이트가 가장 강함 (1-2-3-4-5 > 11-12-13-14-15)", () => {
+    const withTwo = [T(1, Suit.Cloud), T(2, Suit.Star), T(3, Suit.Moon), T(4, Suit.Sun), T(5, Suit.Cloud)];
+    const high = [T(11, Suit.Cloud), T(12, Suit.Star), T(13, Suit.Moon), T(14, Suit.Sun), T(15, Suit.Cloud)];
+    expect(evaluate(withTwo)!.type).toBe("straight");
+    expect(beats(evaluate(withTwo)!, evaluate(high)!)).toBe(true); // 최강 타일 2 > 15
+  });
+
+  it("플러시·스트레이트는 가장 강한 타일로 비교 (숫자 우선, 같으면 무늬)", () => {
+    // 2 포함 플러시(구름) > 2 없는 플러시(해, 최고무늬)
+    const flTwo = [T(2, Suit.Cloud), T(6, Suit.Cloud), T(9, Suit.Cloud), T(11, Suit.Cloud), T(13, Suit.Cloud)];
+    const flHighSuit = [T(15, Suit.Sun), T(13, Suit.Sun), T(11, Suit.Sun), T(9, Suit.Sun), T(7, Suit.Sun)];
+    expect(beats(evaluate(flTwo)!, evaluate(flHighSuit)!)).toBe(true);
+    // 최고 숫자 동일(15) → 무늬로 결정 (해 > 별)
+    const flStar = [T(15, Suit.Star), T(6, Suit.Star), T(5, Suit.Star), T(4, Suit.Star), T(3, Suit.Star)];
+    const flSun = [T(15, Suit.Sun), T(13, Suit.Sun), T(11, Suit.Sun), T(9, Suit.Sun), T(7, Suit.Sun)];
+    expect(beats(evaluate(flSun)!, evaluate(flStar)!)).toBe(true);
   });
 
   it("2-3-4-5-6 이후 wrap 아닌 13-14-15-1-2 는 스트레이트 아님", () => {

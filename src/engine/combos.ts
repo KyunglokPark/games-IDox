@@ -53,6 +53,11 @@ function maxSuit(tiles: Tile[]): number {
   return Math.max(...tiles.map((t) => t.suit));
 }
 
+/** 가장 강한 타일(숫자 강함 우선, 같으면 무늬) */
+function strongestTile(tiles: Tile[]): Tile {
+  return tiles.reduce((best, t) => (tileStrength(t) > tileStrength(best) ? t : best));
+}
+
 /**
  * 타일 묶음이 유효한 조합인지 평가. 유효하면 Combo, 아니면 null.
  * 중복 타일 검사는 상위 로직(손패 검증)에서 처리한다고 가정.
@@ -79,11 +84,12 @@ export function evaluate(input: Tile[]): Combo | null {
     const start = straightStart(tiles);
     const isFlush = tiles.every((t) => t.suit === tiles[0].suit);
     const counts = [...numCounts(tiles).entries()];
+    // 스트레이트/플러시류는 가장 강한 타일로 서열 (숫자 강함 2>1>15>… , 같으면 무늬)
+    const topStr = tileStrength(strongestTile(tiles));
 
     if (start !== null && isFlush) {
       // 스트레이트 플러시
-      const topSuit = tiles[0].suit;
-      return combo(ComboType.StraightFlush, tiles, [start, topSuit]);
+      return combo(ComboType.StraightFlush, tiles, [topStr]);
     }
 
     const four = counts.find(([, c]) => c === 4);
@@ -99,16 +105,13 @@ export function evaluate(input: Tile[]): Combo | null {
     }
 
     if (isFlush) {
-      // 플러시: 숫자순위 내림차순 사전식, 마지막에 무늬
-      const desc = tiles.map((t) => numRank(t.num)).sort((a, b) => b - a);
-      return combo(ComboType.Flush, tiles, [...desc, tiles[0].suit]);
+      // 플러시: 가장 강한 타일로 비교 (숫자 높은 게 이기고, 같으면 무늬)
+      return combo(ComboType.Flush, tiles, [topStr]);
     }
 
     if (start !== null) {
-      // 스트레이트: 시작 face 로 서열, 동률시 최고 face 타일의 무늬
-      const topFace = wrapFace(start + 4);
-      const topSuit = tiles.find((t) => t.num === topFace)!.suit;
-      return combo(ComboType.Straight, tiles, [start, topSuit]);
+      // 스트레이트: 가장 강한 타일로 비교 (2>1>15>… , 같으면 무늬)
+      return combo(ComboType.Straight, tiles, [topStr]);
     }
   }
 
