@@ -354,7 +354,7 @@ function renderMenu() {
           <div class="card-desc">게임 방법</div>
         </button>
       </div>
-      <footer class="home-foot"><span class="foot-logo">IDox</span></footer>
+      <footer class="home-foot"><span class="foot-logo">RUSELL</span></footer>
     </div>`;
   bonusNote = ""; // 한 번 보여주면 지움
   app.querySelector("#local")!.addEventListener("click", renderLocalSetup);
@@ -502,7 +502,7 @@ function renderLogin() {
   mode = "menu";
   app.innerHTML = `
     <div class="scene"><div class="panel narrow">
-      <h1 style="font-size:38px;letter-spacing:4px">IDox</h1>
+      <h1 style="font-size:42px;letter-spacing:4px;font-weight:900">RUSELL</h1>
       <p class="sub">닉네임과 PIN으로 로그인하세요<br>코인은 계정에 저장됩니다</p>
       <label>닉네임</label>
       <input id="name" value="${netName}" maxlength="10" class="field" />

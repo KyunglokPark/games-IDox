@@ -1,9 +1,9 @@
 {
-  "name": "idox",
+  "name": "rusell",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "IDox - 웹 기반 모바일 최적화 온라인 멀티 카드/타일 게임",
+  "description": "RUSELL - 웹 기반 모바일 최적화 온라인 멀티 카드/타일 게임",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

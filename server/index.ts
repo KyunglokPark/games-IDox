@@ -1,4 +1,4 @@
-// IDox 권한 서버 (authoritative). 순수 ws, 이식성 우선.
+// RUSELL 권한 서버 (authoritative). 순수 ws, 이식성 우선.
 // 실행: npm run server  (tsx server/index.ts)
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -389,7 +389,7 @@ function tryResume(ws: WebSocket, s: Session, setCtx: (c: { room: Room; seatId: 
 const httpServer = createServer((req, res) => {
   if (req.method === "GET" && (req.url === "/" || req.url === "/health")) {
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-    res.end("IDox server OK");
+    res.end("RUSELL server OK");
     return;
   }
   // 코인 초기화: /admin/reset?key=<ADMIN_KEY>&name=<닉네임>  또는  &all=1
@@ -426,7 +426,7 @@ const httpServer = createServer((req, res) => {
 
 const wss = new WebSocketServer({ server: httpServer });
 httpServer.listen(PORT, () =>
-  console.log(`[IDox 서버] :${PORT} 대기 중 (http+ws) · 저장소: ${storageMode()}`),
+  console.log(`[RUSELL 서버] :${PORT} 대기 중 (http+ws) · 저장소: ${storageMode()}`),
 );
 
 wss.on("connection", (ws) => {

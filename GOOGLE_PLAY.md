@@ -1,4 +1,4 @@
-# IDox 구글 플레이 출시 가이드 (Capacitor)
+# RUSELL 구글 플레이 출시 가이드 (Capacitor)
 
 웹앱을 **Capacitor**로 감싸 안드로이드 앱(AAB)으로 만들어 구글 플레이에 올립니다.
 웹 자산(`dist/`)을 앱에 **번들**하므로 오프라인에서도 화면이 뜨고, 온라인 대전은 서버(`wss://lexio-server.onrender.com`)에 접속합니다.
@@ -40,7 +40,7 @@ Android Studio에서:
 3. **release** 선택 → Finish → `android/app/release/app-release.aab` 생성
 
 ## 4. 구글 플레이 콘솔 업로드
-1. [Play Console](https://play.google.com/console) → **앱 만들기** (이름 `IDox`, 게임, 무료)
+1. [Play Console](https://play.google.com/console) → **앱 만들기** (이름 `RUSELL`, 게임, 무료)
 2. 좌측 **프로덕션 → 새 버전 만들기** → 위 **`.aab`** 업로드
 3. **스토어 등록정보**: 짧은 설명, 자세한 설명, 스크린샷(폰 최소 2장), 아이콘(512×512), 그래픽 이미지(1024×500)
 4. **콘텐츠 등급** 설문, **개인정보처리방침** URL(간단한 페이지 필요), **데이터 보안** 설문
