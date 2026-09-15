@@ -54,7 +54,11 @@ export interface LoggedInMsg {
   coins: number;
   bonus?: number; // 매일 지원 코인 지급액(있을 때만)
 }
-export type ServerMsg = LobbyMsg | StateMsg | EndedMsg | ErrorMsg | RoomsMsg | LoggedInMsg;
+export interface SignupCodeSentMsg {
+  t: "signupCodeSent";
+  email: string;
+}
+export type ServerMsg = LobbyMsg | StateMsg | EndedMsg | ErrorMsg | RoomsMsg | LoggedInMsg | SignupCodeSentMsg;
 
 /**
  * 기본 서버 주소.
@@ -99,6 +103,12 @@ export class Net {
 
   login(name: string, pin: string) {
     this.send({ t: "login", name, pin });
+  }
+  signupStart(email: string, name: string, pin: string) {
+    this.send({ t: "signupStart", email, name, pin });
+  }
+  signupVerify(name: string, code: string) {
+    this.send({ t: "signupVerify", name, code });
   }
   listRooms() {
     this.send({ t: "rooms" });

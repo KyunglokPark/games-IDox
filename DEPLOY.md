@@ -75,3 +75,16 @@ VITE_SERVER_URL="wss://lexio-server.onrender.com" npm run build
 - 게임은 뜨는데 온라인 접속 실패 → 서버 주소(`wss://`)·Render 서비스 살아있는지(`/health`) 확인.
 - https 페이지인데 `ws://`로 접속 시도 → 브라우저가 차단(혼합 콘텐츠). 반드시 `wss://`.
 - 첫 접속이 느림 → Render 무료 콜드스타트(정상). 30초 후 재시도.
+
+## 이메일 가입/인증 (Resend)
+로그인 화면의 **가입** 버튼 → 이메일로 6자리 인증코드 발송 → 앱에서 입력하면 계정 생성(자동 로그인).
+
+**환경변수 (Render → Environment):**
+- `RESEND_API_KEY` : [resend.com](https://resend.com) 가입 후 발급한 API 키. **없으면 개발 모드**로 코드가 서버 콘솔(로그)에 출력됩니다(실제 메일 미발송).
+- `MAIL_FROM` (선택) : 발신 주소. 기본값 `RUSELL <onboarding@resend.dev>`.
+
+**주의 — Resend 도메인 인증:**
+- 도메인 인증 없이 `onboarding@resend.dev`로 보내면 **본인(가입한 Resend 계정) 이메일로만** 발송됩니다(테스트 제한).
+- 아무 이메일에나 보내려면 Resend에서 **본인 도메인을 인증**하고 `MAIL_FROM`을 그 도메인 주소(예: `RUSELL <no-reply@yourdomain.com>`)로 설정하세요.
+
+**메모:** 기존 닉네임+PIN 로그인은 그대로 유지됩니다(가입은 추가 기능). 인증코드 유효시간 10분, 이메일/닉네임 중복 가입은 막습니다.

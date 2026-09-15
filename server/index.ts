@@ -3,11 +3,16 @@
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { GameState, Tile, botMove, deal, pass, play } from "../src/engine/index.ts";
-import { getProfile, saveProfile, deleteProfile, clearAll, storageMode } from "./store.ts";
+import { getProfile, saveProfile, deleteProfile, clearAll, storageMode, kvGet, kvSet, kvDel } from "./store.ts";
+import { sendVerificationCode, mailMode } from "./mail.ts";
 
 const PORT = Number(process.env.PORT ?? 3001);
 const NEW_USER_COINS = 100; // 신규 유저 지급 코인
 const DAILY_BONUS = 10; // 코인 0일 때 매일 지급량
+const SIGNUP_TTL = 600; // 가입 인증코드 유효시간(초)
+const emailKey = (email: string) => `lexio:email:${email}`;
+const signupKey = (name: string) => `lexio:signup:${name.toLowerCase()}`;
+const isEmail = (s: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);
 const ADMIN_KEY = process.env.ADMIN_KEY || ""; // 코인 초기화용 관리자 키 (없으면 기능 잠금)
 
 // 코인 상품(구글 플레이 인앱): 상품ID → 지급 코인. 금액은 Play Console에서 설정.
@@ -314,6 +319,46 @@ async function handleLogin(
   sendRooms(ws);
 }
 
+// 가입 1단계: 이메일/닉네임/PIN 검증 → 인증코드 생성 후 이메일 발송
+async function handleSignupStart(ws: WebSocket, msg: any) {
+  const email = String(msg.email || "").trim().toLowerCase();
+  const name = String(msg.name || "").slice(0, 10).trim();
+  const pin = String(msg.pin || "");
+  if (!isEmail(email)) return send(ws, { t: "error", msg: "올바른 이메일을 입력하세요" });
+  if (!name) return send(ws, { t: "error", msg: "닉네임을 입력하세요" });
+  if (!/^\d{4}$/.test(pin)) return send(ws, { t: "error", msg: "PIN 4자리 숫자를 입력하세요" });
+  if (await getProfile(name)) return send(ws, { t: "error", msg: "이미 사용 중인 닉네임입니다" });
+  if (await kvGet(emailKey(email))) return send(ws, { t: "error", msg: "이미 가입된 이메일입니다" });
+
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  await kvSet(signupKey(name), JSON.stringify({ email, name, pin, code }), SIGNUP_TTL);
+  try {
+    await sendVerificationCode(email, code);
+  } catch (e) {
+    return send(ws, { t: "error", msg: "인증 메일 발송 실패: " + (e as Error).message });
+  }
+  send(ws, { t: "signupCodeSent", email });
+}
+
+// 가입 2단계: 인증코드 확인 → 계정 생성 + 이메일 인덱스 저장 → 자동 로그인
+async function handleSignupVerify(ws: WebSocket, msg: any, setSession: (s: Session) => void) {
+  const name = String(msg.name || "").slice(0, 10).trim();
+  const code = String(msg.code || "").trim();
+  const raw = await kvGet(signupKey(name));
+  if (!raw) return send(ws, { t: "error", msg: "인증 시간이 만료되었습니다. 다시 시도하세요" });
+  const p = JSON.parse(raw) as { email: string; name: string; pin: string; code: string };
+  if (p.code !== code) return send(ws, { t: "error", msg: "인증코드가 일치하지 않습니다" });
+  if (await getProfile(name)) return send(ws, { t: "error", msg: "이미 가입된 닉네임입니다" });
+
+  await saveProfile(name, { pin: p.pin, coins: NEW_USER_COINS, lastBonus: "", email: p.email, emailVerified: true });
+  await kvSet(emailKey(p.email), name); // 이메일 → 닉네임 (중복 가입 방지)
+  await kvDel(signupKey(name));
+  const session: Session = { name, pin: p.pin, coins: NEW_USER_COINS, lastBonus: "" };
+  setSession(session);
+  send(ws, { t: "loggedin", name, coins: NEW_USER_COINS });
+  sendRooms(ws);
+}
+
 // 세션 유저를 방에 앉힘
 function seatUser(room: Room, s: Session, ws: WebSocket, setCtx: (c: { room: Room; seatId: string }) => void) {
   const seat: Seat = {
@@ -426,7 +471,7 @@ const httpServer = createServer((req, res) => {
 
 const wss = new WebSocketServer({ server: httpServer });
 httpServer.listen(PORT, () =>
-  console.log(`[RUSELL 서버] :${PORT} 대기 중 (http+ws) · 저장소: ${storageMode()}`),
+  console.log(`[RUSELL 서버] :${PORT} 대기 중 (http+ws) · 저장소: ${storageMode()} · 메일: ${mailMode()}`),
 );
 
 wss.on("connection", (ws) => {
@@ -448,6 +493,14 @@ wss.on("connection", (ws) => {
         (s) => (session = s),
         (s) => tryResume(ws, s, (c) => (ctx = c)),
       );
+      return;
+    }
+    if (msg.t === "signupStart") {
+      void handleSignupStart(ws, msg);
+      return;
+    }
+    if (msg.t === "signupVerify") {
+      void handleSignupVerify(ws, msg, (s) => (session = s));
       return;
     }
     if (!session) return send(ws, { t: "error", msg: "먼저 로그인하세요" });

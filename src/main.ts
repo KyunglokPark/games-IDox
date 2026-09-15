@@ -89,6 +89,8 @@ let storeOpen = false; // 코인 상점 화면 표시 중
 let bonusNote = ""; // 로그인 시 매일 지원 코인 알림
 let storeNote = ""; // 상점 구매 결과 알림
 let roomsView = false; // 온라인 대전(방 목록) 흐름 진행 중 (홈과 구분)
+let signupPhase: "form" | "code" = "form"; // 가입 단계
+let suEmail = "", suName = "", suPin = ""; // 가입 입력 보존
 
 // ---------- 타일/선택 유틸 ----------
 function tileHTML(t: Tile, opts: { small?: boolean; selected?: boolean; disabled?: boolean } = {}) {
@@ -509,8 +511,13 @@ function renderLogin() {
       <label>PIN (4자리 숫자)</label>
       <input id="pin" value="${netPin}" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="예: 1234" class="field" />
       <button class="btn" id="join" style="margin-top:6px">로그인</button>
+      <button class="btn ghost" id="signup" style="margin-top:8px">가입 (이메일 인증)</button>
       <p class="sub" id="neterr" style="margin-top:12px;color:#ef8a7a"></p>
     </div></div>`;
+  app.querySelector("#signup")!.addEventListener("click", () => {
+    signupPhase = "form";
+    renderSignup();
+  });
 
   // PIN 마스킹: 방금 입력한 글자만 보이고 다음 글자로 넘어가면 ●로 (실제값은 dataset.real)
   const pinInput = app.querySelector("#pin") as HTMLInputElement;
@@ -545,6 +552,87 @@ function renderLogin() {
   });
 }
 
+// ---------- 가입 (이메일 인증) ----------
+function renderSignup() {
+  mode = "menu";
+  const codePhase = signupPhase === "code";
+  const dis = codePhase ? "disabled" : "";
+  app.innerHTML = `
+    <div class="scene"><div class="panel narrow">
+      <h1 style="font-size:26px;letter-spacing:2px;font-weight:900">가입</h1>
+      <p class="sub">${codePhase ? "이메일로 받은 6자리 코드를 입력하세요" : "이메일 인증 후 계정이 만들어집니다"}</p>
+      <label>이메일</label>
+      <input id="su-email" type="email" value="${suEmail}" class="field" ${dis} placeholder="you@example.com" />
+      <label>닉네임</label>
+      <input id="su-name" value="${suName}" maxlength="10" class="field" ${dis} />
+      <label>PIN (4자리 숫자)</label>
+      <input id="su-pin" value="${suPin}" maxlength="4" inputmode="numeric" class="field" ${dis} placeholder="예: 1234" />
+      ${
+        codePhase
+          ? `<label>인증코드 (6자리)</label>
+             <input id="su-code" maxlength="6" inputmode="numeric" class="field" placeholder="예: 123456" />
+             <button class="btn" id="su-verify" style="margin-top:6px">가입 완료</button>
+             <button class="btn ghost" id="su-resend" style="margin-top:8px">코드 다시 보내기</button>`
+          : `<button class="btn" id="su-send" style="margin-top:6px">인증코드 받기</button>`
+      }
+      <button class="btn ghost" id="su-back" style="margin-top:8px">뒤로</button>
+      <p class="sub" id="neterr" style="margin-top:10px;color:#ef8a7a"></p>
+    </div></div>`;
+  app.querySelector("#su-back")!.addEventListener("click", () => {
+    signupPhase = "form";
+    renderLogin();
+  });
+  if (codePhase) {
+    app.querySelector("#su-verify")!.addEventListener("click", submitSignupVerify);
+    app.querySelector("#su-resend")!.addEventListener("click", () => {
+      signupPhase = "form";
+      submitSignupStart();
+    });
+  } else {
+    app.querySelector("#su-send")!.addEventListener("click", submitSignupStart);
+  }
+}
+
+function signupErr(msg: string) {
+  const e = app.querySelector("#neterr");
+  if (e) e.textContent = msg;
+}
+
+function submitSignupStart() {
+  suEmail = (document.getElementById("su-email") as HTMLInputElement).value.trim();
+  suName = (document.getElementById("su-name") as HTMLInputElement).value.trim();
+  suPin = (document.getElementById("su-pin") as HTMLInputElement).value.trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(suEmail)) return signupErr("올바른 이메일을 입력하세요");
+  if (!suName) return signupErr("닉네임을 입력하세요");
+  if (!/^\d{4}$/.test(suPin)) return signupErr("PIN은 4자리 숫자로 입력하세요");
+  signupErr("인증코드 발송 중…");
+  const go = () => net.signupStart(suEmail, suName, suPin);
+  if (net.isOpen()) go();
+  else connectForSignup(go);
+}
+
+function submitSignupVerify() {
+  const code = (document.getElementById("su-code") as HTMLInputElement).value.trim();
+  if (!/^\d{6}$/.test(code)) return signupErr("6자리 인증코드를 입력하세요");
+  netName = suName;
+  netPin = suPin;
+  localStorage.setItem("idox.name", netName);
+  localStorage.setItem("idox.pin", netPin);
+  signupErr("확인 중…");
+  net.signupVerify(suName, code);
+}
+
+// 로그인 없이 서버에 연결 (가입 흐름용). 연결되면 onReady 실행.
+function connectForSignup(onReady: () => void) {
+  mode = "online";
+  lobby = null;
+  view = null;
+  net.onOpen = onReady;
+  net.onClose = () => signupErr("서버 연결이 끊겼습니다");
+  net.onMessage = handleServer;
+  net.connect(defaultServerUrl());
+}
+
 function connectOnline() {
   mode = "online";
   lobby = null;
@@ -564,8 +652,13 @@ function connectOnline() {
 
 function handleServer(m: ServerMsg) {
   switch (m.t) {
+    case "signupCodeSent":
+      signupPhase = "code";
+      renderSignup();
+      break;
     case "loggedin":
       myCoins = m.coins;
+      signupPhase = "form"; // 가입 완료 시 초기화
       if (m.bonus) bonusNote = `🎁 매일 지원 코인 +${m.bonus} 지급! (코인이 0이어서)`;
       if (storeOpen) {
         storeNote = "구매가 완료되었습니다. 코인이 충전되었어요!";

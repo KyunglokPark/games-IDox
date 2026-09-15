@@ -3,12 +3,15 @@ export interface Profile {
   pin: string;
   coins: number;
   lastBonus?: string; // 매일 지원 코인 마지막 지급일 (YYYY-MM-DD, KST)
+  email?: string; // 이메일 가입 시 연결된 이메일
+  emailVerified?: boolean; // 이메일 인증 완료 여부
 }
 
 const REST_URL = process.env.UPSTASH_REDIS_REST_URL;
 const REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 const useRedis = !!(REST_URL && REST_TOKEN);
 const mem = new Map<string, Profile>();
+const kv = new Map<string, string>(); // 범용 문자열 저장(가입 대기/이메일 인덱스 등)
 
 export function storageMode(): string {
   return useRedis ? "Upstash Redis" : "메모리(폴백)";
@@ -57,6 +60,36 @@ export async function deleteProfile(name: string): Promise<void> {
     await redis(["DEL", key(name)]);
   } catch (e) {
     console.error("[store] deleteProfile 실패:", (e as Error).message);
+  }
+}
+
+// 범용 KV (가입 인증코드 대기, 이메일→닉네임 인덱스 등). ttlSec 지정 시 만료.
+export async function kvSet(key: string, value: string, ttlSec?: number): Promise<void> {
+  kv.set(key, value);
+  if (!useRedis) return;
+  try {
+    await redis(ttlSec ? ["SET", key, value, "EX", ttlSec] : ["SET", key, value]);
+  } catch (e) {
+    console.error("[store] kvSet 실패:", (e as Error).message);
+  }
+}
+export async function kvGet(key: string): Promise<string | null> {
+  if (!useRedis) return kv.get(key) ?? null;
+  try {
+    const v = (await redis(["GET", key])) as string | null;
+    return v ?? kv.get(key) ?? null;
+  } catch (e) {
+    console.error("[store] kvGet 실패:", (e as Error).message);
+    return kv.get(key) ?? null;
+  }
+}
+export async function kvDel(key: string): Promise<void> {
+  kv.delete(key);
+  if (!useRedis) return;
+  try {
+    await redis(["DEL", key]);
+  } catch (e) {
+    console.error("[store] kvDel 실패:", (e as Error).message);
   }
 }
 
