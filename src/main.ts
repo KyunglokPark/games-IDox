@@ -619,7 +619,9 @@ function submitSignupVerify() {
   localStorage.setItem("idox.name", netName);
   localStorage.setItem("idox.pin", netPin);
   signupErr("확인 중…");
-  net.signupVerify(suName, code);
+  const go = () => net.signupVerify(suName, code); // 인증코드는 서버(Upstash)에 저장되어 재접속해도 유효
+  if (net.isOpen()) go();
+  else connectForSignup(go);
 }
 
 // 로그인 없이 서버에 연결 (가입 흐름용). 연결되면 onReady 실행.
