@@ -434,7 +434,7 @@ function tryResume(ws: WebSocket, s: Session, setCtx: (c: { room: Room; seatId: 
 const httpServer = createServer((req, res) => {
   if (req.method === "GET" && (req.url === "/" || req.url === "/health")) {
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-    res.end("RUSELL server OK");
+    res.end(`RUSELL server OK · 저장소: ${storageMode()} · 메일: ${mailMode()}`);
     return;
   }
   // 코인 초기화: /admin/reset?key=<ADMIN_KEY>&name=<닉네임>  또는  &all=1
